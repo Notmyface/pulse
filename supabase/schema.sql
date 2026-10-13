@@ -183,23 +183,23 @@ CREATE POLICY "Profiles readable by auth users" ON public.profiles
 CREATE POLICY "Users can update own profile" ON public.profiles
     FOR UPDATE TO authenticated USING (auth.uid() = id);
 
--- Projeler: Giriş yapmış herkes projeleri listeleyebilir
+-- Projeler: Giriş yapmış herkes projeleri listeleyebilir ve oluşturabilir
 CREATE POLICY "Projects accessible by authenticated" ON public.projects
-    FOR ALL TO authenticated USING (true);
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- Proje üyeleri
 CREATE POLICY "Project members accessible" ON public.project_members
-    FOR ALL TO authenticated USING (true);
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- Görevler: Tüm ekip okuyabilir
 CREATE POLICY "Tasks readable by team" ON public.tasks
     FOR SELECT TO authenticated USING (true);
 
 CREATE POLICY "Tasks insertable by authenticated" ON public.tasks
-    FOR INSERT TO authenticated WITH CHECK (auth.uid() = created_by);
+    FOR INSERT TO authenticated WITH CHECK (true);
 
 CREATE POLICY "Tasks updatable by authenticated" ON public.tasks
-    FOR UPDATE TO authenticated USING (true);
+    FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
 
 -- Görev Yorumları
 CREATE POLICY "Task comments readable" ON public.task_comments

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, Plus, User, AlertCircle, Calendar, Folder } from "lucide-react";
+import { X, Plus, User, AlertCircle, Calendar, Folder, FolderPlus } from "lucide-react";
 import type { Task } from "@/types/database";
 
 interface CreateTaskModalProps {
@@ -10,7 +10,9 @@ interface CreateTaskModalProps {
   teamMembers: { id: string; name: string; role: string }[];
   projects: { id: string; name: string; color: string }[];
   currentProjectId: string;
-  onCreateTask: (newTask: Omit<Task, "id" | "created_at">) => void;
+  currentUserId?: string;
+  currentUserName?: string;
+  onCreateTask: (newTask: Omit<Task, "id" | "created_at">, newProjectTitle?: string) => void;
 }
 
 export default function CreateTaskModal({
@@ -19,45 +21,65 @@ export default function CreateTaskModal({
   teamMembers,
   projects,
   currentProjectId,
+  currentUserId,
+  currentUserName,
   onCreateTask
 }: CreateTaskModalProps) {
   if (!isOpen) return null;
 
+  // Ekip üyelerinde kendisi yoksa en başa ekle
+  const availableMembers = [...teamMembers];
+  if (currentUserId && !availableMembers.some(m => m.id === currentUserId)) {
+    availableMembers.unshift({
+      id: currentUserId,
+      name: currentUserName ? `${currentUserName} (Kendim)` : "Ben",
+      role: "Yönetici"
+    });
+  }
+
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [projectId, setProjectId] = useState(currentProjectId || projects[0]?.id || "p1");
-  const [assignedTo, setAssignedTo] = useState(teamMembers[0]?.id || "");
+  const [projectId, setProjectId] = useState(currentProjectId || projects[0]?.id || "new");
+  const [newProjectName, setNewProjectName] = useState("");
+  const [isCreatingNewProject, setIsCreatingNewProject] = useState(projects.length === 0);
+  const [assignedTo, setAssignedTo] = useState(currentUserId || availableMembers[0]?.id || "");
   const [priority, setPriority] = useState<Task["priority"]>("normal");
-  const [dueDateDays, setDueDateDays] = useState<number>(3); // 3 gün sonra varsayılan
+  
+  // Takvimden seçilebilir tarih (Varsayılan: 3 gün sonrası)
+  const defaultDueDate = new Date(Date.now() + 3 * 86400000).toISOString().split("T")[0];
+  const [dueDate, setDueDate] = useState<string>(defaultDueDate);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
 
-    const assignedMember = teamMembers.find(m => m.id === assignedTo);
+    const assignedMember = availableMembers.find(m => m.id === assignedTo);
+    const finalDueDate = dueDate ? new Date(dueDate).toISOString() : undefined;
 
-    const due_date = new Date(Date.now() + dueDateDays * 86400000).toISOString();
-
-    onCreateTask({
-      project_id: projectId,
-      title: title.trim(),
-      description: description.trim() || undefined,
-      status: "todo",
-      priority,
-      created_by: "u1", // Mevcut oturum açmış yönetici
-      assigned_to: assignedTo || undefined,
-      due_date,
-      assigned_profile: assignedMember ? {
-        id: assignedMember.id,
-        email: `${assignedMember.name.toLowerCase().replace(/\s+/g, '')}@ekip.com`,
-        full_name: assignedMember.name,
-        role: "member",
-        created_at: ""
-      } : undefined
-    });
+    onCreateTask(
+      {
+        project_id: isCreatingNewProject ? "" : projectId,
+        title: title.trim(),
+        description: description.trim() || undefined,
+        status: "todo",
+        priority,
+        created_by: currentUserId || "u1",
+        assigned_to: assignedTo || undefined,
+        due_date: finalDueDate,
+        assigned_profile: assignedMember ? {
+          id: assignedMember.id,
+          email: `${assignedMember.name.toLowerCase().replace(/\s+/g, '')}@ekip.com`,
+          full_name: assignedMember.name,
+          role: "member",
+          created_at: ""
+        } : undefined
+      },
+      isCreatingNewProject ? newProjectName.trim() : undefined
+    );
 
     setTitle("");
     setDescription("");
+    setNewProjectName("");
     onClose();
   };
 
@@ -113,26 +135,52 @@ export default function CreateTaskModal({
             />
           </div>
 
-          {/* Grid: Proje, Atanan Kişi, Öncelik, Teslim Tarihi */}
-          <div className="grid grid-cols-2 gap-3 text-xs">
-            
-            {/* Proje */}
-            <div className="space-y-1">
-              <label className="text-slate-400 flex items-center gap-1 text-[11px]">
-                <Folder size={13} className="text-indigo-400" /> Proje
+          {/* Proje Seçimi veya Yeni Proje Ekleme */}
+          <div className="space-y-1">
+            <div className="flex justify-between items-center text-[11px]">
+              <label className="text-slate-400 flex items-center gap-1">
+                <Folder size={13} className="text-indigo-400" /> İlgili Proje
               </label>
+              <button
+                type="button"
+                onClick={() => setIsCreatingNewProject(!isCreatingNewProject)}
+                className="text-indigo-400 hover:underline flex items-center gap-0.5"
+              >
+                <FolderPlus size={12} />
+                {isCreatingNewProject ? "Mevcut Projelerden Seç" : "+ Yeni Proje Oluştur"}
+              </button>
+            </div>
+
+            {isCreatingNewProject ? (
+              <input
+                type="text"
+                required
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                placeholder="Yeni Proje Adı (Örn: Pazarlama Kampanyası)"
+                className="w-full bg-slate-800 border border-indigo-500/60 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400"
+              />
+            ) : (
               <select 
                 value={projectId}
                 onChange={(e) => setProjectId(e.target.value)}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
               >
-                {projects.map(proj => (
-                  <option key={proj.id} value={proj.id}>{proj.name}</option>
-                ))}
+                {projects.length === 0 ? (
+                  <option value="default">Genel Çalışma Alanı</option>
+                ) : (
+                  projects.map(proj => (
+                    <option key={proj.id} value={proj.id}>{proj.name}</option>
+                  ))
+                )}
               </select>
-            </div>
+            )}
+          </div>
 
-            {/* Atanan Kişi */}
+          {/* Grid: Atanan Kişi, Öncelik, Takvimden Teslim Tarihi */}
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            
+            {/* Görevli Kişi */}
             <div className="space-y-1">
               <label className="text-slate-400 flex items-center gap-1 text-[11px]">
                 <User size={13} className="text-indigo-400" /> Görevli Kişi
@@ -140,10 +188,12 @@ export default function CreateTaskModal({
               <select 
                 value={assignedTo}
                 onChange={(e) => setAssignedTo(e.target.value)}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
               >
-                {teamMembers.map(member => (
-                  <option key={member.id} value={member.id}>{member.name}</option>
+                {availableMembers.map(member => (
+                  <option key={member.id} value={member.id}>
+                    {member.name}
+                  </option>
                 ))}
               </select>
             </div>
@@ -156,7 +206,7 @@ export default function CreateTaskModal({
               <select 
                 value={priority}
                 onChange={(e) => setPriority(e.target.value as Task["priority"])}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
               >
                 <option value="urgent">🔴 Acil</option>
                 <option value="high">🟠 Yüksek</option>
@@ -165,23 +215,19 @@ export default function CreateTaskModal({
               </select>
             </div>
 
-            {/* Teslim Süresi */}
-            <div className="space-y-1">
-              <label className="text-slate-400 flex items-center gap-1 text-[11px]">
-                <Calendar size={13} className="text-emerald-400" /> Teslim Süresi
-              </label>
-              <select 
-                value={dueDateDays}
-                onChange={(e) => setDueDateDays(Number(e.target.value))}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
-              >
-                <option value={1}>Bugün / Yarın (1 Gün)</option>
-                <option value={3}>3 Gün İçinde</option>
-                <option value={7}>1 Hafta İçinde</option>
-                <option value={14}>2 Hafta İçinde</option>
-              </select>
-            </div>
+          </div>
 
+          {/* TAKVİMDEN TESLİM TARİHİ SEÇİMİ */}
+          <div className="space-y-1">
+            <label className="text-slate-400 flex items-center gap-1 text-[11px]">
+              <Calendar size={13} className="text-emerald-400" /> Teslim Tarihi (Takvim)
+            </label>
+            <input 
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 scheme-dark cursor-pointer"
+            />
           </div>
 
           {/* Gönder / Oluştur Butonu */}

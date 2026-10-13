@@ -25,7 +25,8 @@ import {
   Lock, 
   User as UserIcon, 
   ArrowRight, 
-  Loader2 
+  Loader2,
+  FolderPlus
 } from "lucide-react";
 import { formatTimeAgo } from "@/lib/utils";
 import type { Task, ChatMessage, NotificationItem } from "@/types/database";
@@ -45,7 +46,7 @@ export default function MobileDashboard() {
   const [currentUser, setCurrentUser] = useState<{ id: string; email: string; full_name: string } | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
-  // Giriş / Kayıt Form State'leri (Giriş Yapılmamışsa Gösterilecek Kapı)
+  // Giriş / Kayıt Form State'leri
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
@@ -59,8 +60,13 @@ export default function MobileDashboard() {
   const [taskFilter, setTaskFilter] = useState<"all" | "assigned_to_me" | "urgent">("all");
   
   // Canlı Veritabanı State'leri
-  const [projects, setProjects] = useState<Array<{ id: string; name: string; color: string }>>([]);
-  const [activeProjectId, setActiveProjectId] = useState<string>("");
+  const [projects, setProjects] = useState<Array<{ id: string; name: string; color: string }>>([
+    { id: "default-proj", name: "Genel Çalışma Alanı", color: "#6366f1" }
+  ]);
+  const [activeProjectId, setActiveProjectId] = useState<string>("default-proj");
+  const [isAddingProject, setIsAddingProject] = useState(false);
+  const [newProjectInput, setNewProjectInput] = useState("");
+
   const [teamMembers, setTeamMembers] = useState<Array<{ id: string; name: string; role: string }>>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
 
@@ -86,14 +92,12 @@ export default function MobileDashboard() {
 
   // 1. SERVICE WORKER KAYDI & OTURUM KONTROLÜ
   useEffect(() => {
-    // PWA Service Worker Kaydı
     if (typeof window !== "undefined" && "serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(err => {
         console.warn("SW kayıt hatası:", err);
       });
     }
 
-    // Supabase Oturumu Kontrol Et
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         const u = {
@@ -102,7 +106,7 @@ export default function MobileDashboard() {
           full_name: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "Yönetici"
         };
         setCurrentUser(u);
-        loadSupabaseData(session.user.id);
+        loadSupabaseData(session.user.id, u.full_name);
       }
       setIsCheckingAuth(false);
     });
@@ -115,7 +119,7 @@ export default function MobileDashboard() {
           full_name: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "Yönetici"
         };
         setCurrentUser(u);
-        loadSupabaseData(session.user.id);
+        loadSupabaseData(session.user.id, u.full_name);
       } else {
         setCurrentUser(null);
         setTasks([]);
@@ -131,52 +135,68 @@ export default function MobileDashboard() {
   }, []);
 
   // 2. SUPABASE VERİLERİNİ ÇEKME
-  const loadSupabaseData = async (userId: string) => {
+  const loadSupabaseData = async (userId: string, userName?: string) => {
     try {
-      // Projeler
+      // 1. Projeleri Çek
       const { data: projData } = await supabase.from("projects").select("*");
       if (projData && projData.length > 0) {
         const formatted = projData.map((p: any) => ({ id: p.id, name: p.name, color: p.color_code || "#6366f1" }));
         setProjects(formatted);
         setActiveProjectId(formatted[0].id);
       } else {
+        // Veritabanında proje yoksa yeni bir tane oluşturmayı dene
         const { data: newProj } = await supabase.from("projects").insert({
           name: "Genel Çalışma Alanı",
           color_code: "#6366f1",
           created_by: userId
         }).select().single();
+
         if (newProj) {
           setProjects([{ id: newProj.id, name: newProj.name, color: newProj.color_code }]);
           setActiveProjectId(newProj.id);
         }
       }
 
-      // Ekip Profilleri
+      // 2. Ekip Üyelerini Çek (Kendisini kesinlikle dahil et)
       const { data: profData } = await supabase.from("profiles").select("*");
+      const members: Array<{ id: string; name: string; role: string }> = [];
+
+      // Önce mevcut kullanıcıyı ekle
+      members.push({
+        id: userId,
+        name: `${userName || "Ben"} (Kendim)`,
+        role: "Yönetici"
+      });
+
       if (profData && profData.length > 0) {
-        const members = profData.map((p: any) => ({
-          id: p.id,
-          name: p.full_name || p.email,
-          role: p.role === "admin" ? "Yönetici" : "Üye"
-        }));
-        setTeamMembers(members);
-        const otherMember = members.find(m => m.id !== userId);
-        if (otherMember) setActiveDmUser(otherMember.id);
+        profData.forEach((p: any) => {
+          if (p.id !== userId) {
+            members.push({
+              id: p.id,
+              name: p.full_name || p.email,
+              role: p.role === "admin" ? "Yönetici" : "Üye"
+            });
+          }
+        });
+      }
+      setTeamMembers(members);
+      if (members.length > 1) {
+        setActiveDmUser(members[1].id);
       }
 
-      // Görevler
+      // 3. Görevleri Çek
       const { data: taskData } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
       if (taskData) setTasks(taskData);
 
-      // Mesajlar
+      // 4. Mesajları Çek
       const { data: msgData } = await supabase.from("chat_messages").select("*").order("created_at", { ascending: true });
       if (msgData) setMessages(msgData);
 
-      // Bildirimler
+      // 5. Bildirimleri Çek
       const { data: notifData } = await supabase.from("notifications").select("*").order("created_at", { ascending: false });
       if (notifData) setNotifications(notifData);
 
-      // Realtime Soket Dinleyici
+      // 6. Realtime Soket Dinleyici
       supabase.channel("pulse-live-sync")
         .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, () => {
           supabase.from("tasks").select("*").order("created_at", { ascending: false }).then(({ data }) => {
@@ -215,14 +235,17 @@ export default function MobileDashboard() {
         });
 
         if (error) throw error;
-        if (data.user) {
+
+        if (data.session) {
           const u = {
-            id: data.user.id,
-            email: data.user.email || authEmail,
+            id: data.user!.id,
+            email: data.user!.email || authEmail,
             full_name: authFullName.trim() || authEmail.split("@")[0]
           };
           setCurrentUser(u);
-          loadSupabaseData(data.user.id);
+          loadSupabaseData(data.user!.id, u.full_name);
+        } else if (data.user) {
+          setAuthError("Kayıt oluşturuldu! Supabase Dashboard > Authentication > Providers > Email bölümünden 'Confirm email' seçeneğini kapatırsanız veya e-postanızı onaylarsanız hemen giriş yapabilirsiniz.");
         }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -230,7 +253,15 @@ export default function MobileDashboard() {
           password: authPassword
         });
 
-        if (error) throw error;
+        if (error) {
+          if (error.message.includes("Invalid login credentials")) {
+            setAuthError("Geçersiz e-posta veya şifre! (Yeni kayıt olduysanız, Supabase Dashboard > Authentication > Providers > Email bölümünden 'Confirm email' ayarını kapatarak e-posta onayını devre dışı bırakabilirsiniz.)");
+          } else {
+            setAuthError(error.message);
+          }
+          return;
+        }
+
         if (data.user) {
           const u = {
             id: data.user.id,
@@ -238,7 +269,7 @@ export default function MobileDashboard() {
             full_name: data.user.user_metadata?.full_name || authEmail.split("@")[0]
           };
           setCurrentUser(u);
-          loadSupabaseData(data.user.id);
+          loadSupabaseData(data.user.id, u.full_name);
         }
       }
     } catch (err: any) {
@@ -246,6 +277,29 @@ export default function MobileDashboard() {
       setAuthError(err.message || "Giriş yapılırken bir hata oluştu.");
     } finally {
       setAuthLoading(false);
+    }
+  };
+
+  // Yeni Proje Oluştur
+  const handleAddNewProject = async () => {
+    if (!newProjectInput.trim() || !currentUser) return;
+
+    try {
+      const { data, error } = await supabase.from("projects").insert({
+        name: newProjectInput.trim(),
+        color_code: "#6366f1",
+        created_by: currentUser.id
+      }).select().single();
+
+      if (data) {
+        const newProj = { id: data.id, name: data.name, color: data.color_code };
+        setProjects(prev => [...prev, newProj]);
+        setActiveProjectId(data.id);
+        setNewProjectInput("");
+        setIsAddingProject(false);
+      }
+    } catch (err) {
+      console.error("Proje eklenemedi:", err);
     }
   };
 
@@ -277,26 +331,52 @@ export default function MobileDashboard() {
   };
 
   // Yeni Görev Oluştur
-  const handleCreateTask = async (newTaskData: Omit<Task, "id" | "created_at">) => {
+  const handleCreateTask = async (newTaskData: Omit<Task, "id" | "created_at">, newProjectTitle?: string) => {
     if (!currentUser) return;
 
     try {
+      let targetProjectId = newTaskData.project_id || activeProjectId;
+
+      // Eğer modal içinde yeni bir proje ismi yazıldıysa önce projeyi oluştur
+      if (newProjectTitle) {
+        const { data: createdProj } = await supabase.from("projects").insert({
+          name: newProjectTitle,
+          color_code: "#6366f1",
+          created_by: currentUser.id
+        }).select().single();
+
+        if (createdProj) {
+          targetProjectId = createdProj.id;
+          const p = { id: createdProj.id, name: createdProj.name, color: createdProj.color_code };
+          setProjects(prev => [...prev, p]);
+          setActiveProjectId(createdProj.id);
+        }
+      }
+
+      // Eğer hala geçerli bir proje ID'si yoksa ilk projeyi al
+      if (!targetProjectId || targetProjectId === "default-proj") {
+        targetProjectId = projects[0]?.id;
+      }
+
       const { data, error } = await supabase.from("tasks").insert({
-        project_id: newTaskData.project_id || activeProjectId,
+        project_id: targetProjectId,
         title: newTaskData.title,
         description: newTaskData.description,
         status: newTaskData.status,
         priority: newTaskData.priority,
-        assigned_to: newTaskData.assigned_to,
+        assigned_to: newTaskData.assigned_to || currentUser.id,
         due_date: newTaskData.due_date,
         created_by: currentUser.id
       }).select().single();
 
       if (data) {
         setTasks(prev => [data, ...prev]);
+      } else if (error) {
+        console.error("Görev insert hatası:", error);
+        alert(`Görev kaydedilemedi: ${error.message}`);
       }
     } catch (err) {
-      console.error("Görev kaydedilemedi:", err);
+      console.error("Görev oluşturulamadı:", err);
     }
   };
 
@@ -385,9 +465,7 @@ export default function MobileDashboard() {
   const activeProject = projects.find(p => p.id === activeProjectId);
   const activeDmMember = teamMembers.find(m => m.id === activeDmUser);
 
-  // =========================================================================
-  // YÜKLENİYOR EKRANI
-  // =========================================================================
+  // YÜKLENİYOR
   if (isCheckingAuth) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-950 text-white p-4">
@@ -399,17 +477,12 @@ export default function MobileDashboard() {
     );
   }
 
-  // =========================================================================
-  // GİRİŞ YAPILMAMIŞSA: TAM EKRAN GİRİŞ & KAYIT KAPISI (AUTH GATE)
-  // =========================================================================
+  // GİRİŞ YAPILMAMIŞSA: AUTH GATE
   if (!currentUser) {
     return (
       <div className="min-h-screen max-w-md mx-auto w-full bg-slate-950 text-slate-100 flex flex-col justify-center px-5 py-8 shadow-2xl relative overflow-hidden">
-        
-        {/* PWA Yükleme Uyarısı / Butonu */}
         <InstallPrompt />
 
-        {/* Logo ve Başlık */}
         <div className="text-center space-y-2 mb-6">
           <div className="w-14 h-14 rounded-3xl bg-indigo-600 flex items-center justify-center font-bold text-3xl text-white shadow-indigo-500/40 shadow-2xl mx-auto">
             ⚡
@@ -422,10 +495,7 @@ export default function MobileDashboard() {
           </p>
         </div>
 
-        {/* Giriş / Kayıt Kartı */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
-          
-          {/* Sekme Değiştirici */}
           <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-medium">
             <button
               onClick={() => { setAuthMode("login"); setAuthError(""); }}
@@ -442,13 +512,12 @@ export default function MobileDashboard() {
           </div>
 
           {authError && (
-            <div className="p-3 bg-rose-950/60 border border-rose-500/40 rounded-xl text-xs text-rose-300">
+            <div className="p-3 bg-rose-950/60 border border-rose-500/40 rounded-xl text-xs text-rose-300 leading-relaxed">
               {authError}
             </div>
           )}
 
           <form onSubmit={handleAuthSubmit} className="space-y-3 pt-1">
-            
             {authMode === "register" && (
               <div className="space-y-1">
                 <label className="text-[11px] font-medium text-slate-400 flex items-center gap-1">
@@ -508,43 +577,70 @@ export default function MobileDashboard() {
                 </>
               )}
             </button>
-
           </form>
-
         </div>
-
       </div>
     );
   }
 
-  // =========================================================================
-  // GİRİŞ YAPILMIŞSA: CANLI ÇALIŞMA ALANI & DASHBOARD
-  // =========================================================================
+  // GİRİŞ YAPILMIŞSA: DASHBOARD
   return (
     <div className="flex flex-col h-screen max-w-md mx-auto w-full bg-slate-950 text-slate-100 shadow-2xl relative overflow-hidden">
       
       {/* 1. ÜST BAŞLIK */}
       <header className="px-4 pt-12 pb-3 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 flex items-center justify-between sticky top-0 z-30">
-        <div className="flex items-center space-x-2.5">
-          <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center font-bold text-white shadow-indigo-500/20 shadow-lg text-sm">
+        <div className="flex items-center space-x-2 min-w-0">
+          <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center font-bold text-white shadow-indigo-500/20 shadow-lg text-sm shrink-0">
             ⚡
           </div>
-          <div>
-            <select 
-              value={activeProjectId}
-              onChange={(e) => setActiveProjectId(e.target.value)}
-              className="bg-transparent text-sm font-semibold text-slate-100 focus:outline-none cursor-pointer pr-1 max-w-[150px] truncate"
-            >
-              {projects.map(proj => (
-                <option key={proj.id} value={proj.id} className="bg-slate-900 text-white">
-                  {proj.name}
-                </option>
-              ))}
-            </select>
+          <div className="min-w-0">
+            {isAddingProject ? (
+              <div className="flex items-center gap-1">
+                <input
+                  type="text"
+                  autoFocus
+                  value={newProjectInput}
+                  onChange={(e) => setNewProjectInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddNewProject()}
+                  placeholder="Proje Adı..."
+                  className="bg-slate-800 border border-indigo-500 text-xs text-white px-2 py-0.5 rounded-lg w-28 focus:outline-none"
+                />
+                <button onClick={handleAddNewProject} className="text-xs text-emerald-400 font-bold px-1">✓</button>
+                <button onClick={() => setIsAddingProject(false)} className="text-xs text-slate-400 px-1">✕</button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1">
+                <select 
+                  value={activeProjectId}
+                  onChange={(e) => {
+                    if (e.target.value === "new") {
+                      setIsAddingProject(true);
+                    } else {
+                      setActiveProjectId(e.target.value);
+                    }
+                  }}
+                  className="bg-transparent text-sm font-semibold text-slate-100 focus:outline-none cursor-pointer pr-1 max-w-[130px] truncate"
+                >
+                  {projects.map(proj => (
+                    <option key={proj.id} value={proj.id} className="bg-slate-900 text-white">
+                      {proj.name}
+                    </option>
+                  ))}
+                  <option value="new" className="bg-slate-900 text-indigo-400 font-semibold">+ Yeni Proje Ekle</option>
+                </select>
+                <button
+                  onClick={() => setIsAddingProject(true)}
+                  className="text-slate-400 hover:text-indigo-400 p-0.5"
+                  title="Yeni Proje Aç"
+                >
+                  <FolderPlus size={14} />
+                </button>
+              </div>
+            )}
             
             <div className="flex items-center gap-1 mt-0.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span className="text-[10px] text-emerald-400 font-medium">
+              <span className="text-[10px] text-emerald-400 font-medium truncate">
                 {teamMembers.length} Üye Aktif
               </span>
             </div>
@@ -552,10 +648,10 @@ export default function MobileDashboard() {
         </div>
 
         {/* Kullanıcı Profili ve Çıkış */}
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2 shrink-0">
           <div className="flex items-center gap-1.5">
             <div className="text-right">
-              <p className="text-[11px] font-semibold text-slate-200 truncate max-w-[80px]">
+              <p className="text-[11px] font-semibold text-slate-200 truncate max-w-[70px]">
                 {currentUser.full_name}
               </p>
               <button
@@ -585,14 +681,11 @@ export default function MobileDashboard() {
 
       {/* 2. ANA İÇERİK */}
       <main className="flex-1 overflow-y-auto px-4 py-3 pb-24">
-        
-        {/* PWA Yükleme Uyarısı / Butonu */}
         <InstallPrompt />
 
         {/* --- TAB: GÖREVLER (TASKS) --- */}
         {activeTab === "tasks" && (
           <div className="space-y-4">
-            
             <div className="flex items-center justify-between gap-2">
               <div className="flex gap-1.5 overflow-x-auto text-xs py-0.5">
                 <button 
@@ -643,8 +736,14 @@ export default function MobileDashboard() {
             ) : (
               <div className="space-y-2.5">
                 {filteredTasks.length === 0 ? (
-                  <div className="text-center py-12 text-slate-400 text-xs bg-slate-900/30 rounded-2xl border border-dashed border-slate-800">
-                    Henüz görev bulunmuyor. Üstteki (+) ile ilk görevi ekleyin!
+                  <div className="text-center py-12 text-slate-400 text-xs bg-slate-900/30 rounded-2xl border border-dashed border-slate-800 space-y-2">
+                    <p>Bu projede henüz görev bulunmuyor.</p>
+                    <button
+                      onClick={() => setIsCreateModalOpen(true)}
+                      className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-medium hover:bg-indigo-500 transition"
+                    >
+                      + İlk Görevi Ekle
+                    </button>
                   </div>
                 ) : (
                   filteredTasks.map(task => {
@@ -693,11 +792,15 @@ export default function MobileDashboard() {
                               )}
                               <span className="flex items-center gap-1 bg-slate-800 px-2 py-0.5 rounded-full text-slate-300">
                                 <UserCheck size={11} className="text-indigo-400" />
-                                {task.assigned_profile?.full_name || "Atanmadı"}
+                                {task.assigned_to === currentUser.id 
+                                  ? "Bana Atandı" 
+                                  : (teamMembers.find(m => m.id === task.assigned_to)?.name || "Atandı")}
                               </span>
-                              <span className="text-slate-400">
-                                {formatTimeAgo(task.created_at)}
-                              </span>
+                              {task.due_date && (
+                                <span className="text-emerald-400">
+                                  Teslim: {new Date(task.due_date).toLocaleDateString("tr-TR", { day: "numeric", month: "short" })}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -707,14 +810,12 @@ export default function MobileDashboard() {
                 )}
               </div>
             )}
-
           </div>
         )}
 
         {/* --- TAB: SOHBET (CHAT) --- */}
         {activeTab === "chat" && (
           <div className="flex flex-col h-full space-y-3">
-            
             <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
               <button 
                 onClick={() => setChatMode("channel")}
@@ -765,7 +866,7 @@ export default function MobileDashboard() {
                     <div className="flex-1 bg-slate-900 border border-slate-800 p-2.5 rounded-2xl rounded-tl-none space-y-1.5">
                       <div className="flex justify-between items-baseline">
                         <span className="text-xs font-semibold text-slate-200">
-                          {msg.sender?.full_name || "Kullanıcı"}
+                          {msg.sender_id === currentUser.id ? "Siz" : (msg.sender?.full_name || "Kullanıcı")}
                         </span>
                         <span className="text-[10px] text-slate-400">
                           {formatTimeAgo(msg.created_at)}
@@ -816,7 +917,6 @@ export default function MobileDashboard() {
                           </a>
                         </div>
                       )}
-
                     </div>
                   </div>
                 ))
@@ -882,7 +982,6 @@ export default function MobileDashboard() {
                   <Send size={15} />
                 </button>
               </div>
-
             </div>
           </div>
         )}
@@ -972,7 +1071,6 @@ export default function MobileDashboard() {
             </div>
           </div>
         )}
-
       </main>
 
       {/* 3. MOBİL ALT NAVİGASYON */}
@@ -1040,6 +1138,8 @@ export default function MobileDashboard() {
         teamMembers={teamMembers}
         projects={projects}
         currentProjectId={activeProjectId}
+        currentUserId={currentUser.id}
+        currentUserName={currentUser.full_name}
         onCreateTask={handleCreateTask}
       />
 
