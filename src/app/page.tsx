@@ -46,13 +46,14 @@ export default function MobileDashboard() {
   const [currentUser, setCurrentUser] = useState<{ id: string; email: string; full_name: string } | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
-  // Giriş / Kayıt Form State'leri
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  // Giriş / Kayıt / Şifremi Unuttum Form State'leri
+  const [authMode, setAuthMode] = useState<"login" | "register" | "forgot">("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authFullName, setAuthFullName] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [authSuccess, setAuthSuccess] = useState("");
 
   // Uygulama Navigasyon State'leri
   const [activeTab, setActiveTab] = useState<"tasks" | "chat" | "notifications" | "team">("tasks");
@@ -216,13 +217,26 @@ export default function MobileDashboard() {
     }
   };
 
-  // 3. GİRİŞ & KAYIT İŞLEMİ
+  // 3. GİRİŞ & KAYIT & ŞİFRE SIFIRLAMA İŞLEMİ
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
+    setAuthSuccess("");
     setAuthLoading(true);
 
     try {
+      // Şifremi Unuttum Modu
+      if (authMode === "forgot") {
+        const { error } = await supabase.auth.resetPasswordForEmail(authEmail.trim(), {
+          redirectTo: typeof window !== "undefined" ? `${window.location.origin}` : undefined
+        });
+
+        if (error) throw error;
+        setAuthSuccess("Şifre sıfırlama bağlantısı e-posta adresinize gönderildi. Lütfen gelen kutunuzu kontrol edin.");
+        return;
+      }
+
+      // Kayıt Ol Modu
       if (authMode === "register") {
         const { data, error } = await supabase.auth.signUp({
           email: authEmail.trim(),
@@ -234,7 +248,14 @@ export default function MobileDashboard() {
           }
         });
 
-        if (error) throw error;
+        if (error) {
+          if (error.message.includes("already registered") || error.message.includes("User already exists")) {
+            setAuthError("Bu e-posta adresi ile zaten bir hesap bulunuyor. Lütfen giriş yapın.");
+          } else {
+            setAuthError(error.message);
+          }
+          return;
+        }
 
         if (data.session) {
           const u = {
@@ -245,9 +266,10 @@ export default function MobileDashboard() {
           setCurrentUser(u);
           loadSupabaseData(data.user!.id, u.full_name);
         } else if (data.user) {
-          setAuthError("Kayıt oluşturuldu! Supabase Dashboard > Authentication > Providers > Email bölümünden 'Confirm email' seçeneğini kapatırsanız veya e-postanızı onaylarsanız hemen giriş yapabilirsiniz.");
+          setAuthSuccess("Hesabınız oluşturuldu! E-postanızı doğruladıktan sonra giriş yapabilirsiniz.");
         }
       } else {
+        // Giriş Yap Modu
         const { data, error } = await supabase.auth.signInWithPassword({
           email: authEmail.trim(),
           password: authPassword
@@ -255,9 +277,11 @@ export default function MobileDashboard() {
 
         if (error) {
           if (error.message.includes("Invalid login credentials")) {
-            setAuthError("Geçersiz e-posta veya şifre! (Yeni kayıt olduysanız, Supabase Dashboard > Authentication > Providers > Email bölümünden 'Confirm email' ayarını kapatarak e-posta onayını devre dışı bırakabilirsiniz.)");
+            setAuthError("E-posta adresi veya şifre hatalı. Lütfen bilgilerinizi kontrol edin.");
+          } else if (error.message.includes("Email not confirmed")) {
+            setAuthError("E-posta adresiniz henüz doğrulanmamış. Lütfen gelen kutunuzu kontrol edin.");
           } else {
-            setAuthError(error.message);
+            setAuthError("Giriş yapılamadı. Lütfen bilgilerinizi kontrol edin.");
           }
           return;
         }
@@ -274,7 +298,7 @@ export default function MobileDashboard() {
       }
     } catch (err: any) {
       console.error(err);
-      setAuthError(err.message || "Giriş yapılırken bir hata oluştu.");
+      setAuthError("İşlem gerçekleştirilemedi. Lütfen tekrar deneyin.");
     } finally {
       setAuthLoading(false);
     }
@@ -496,24 +520,42 @@ export default function MobileDashboard() {
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
-          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-medium">
-            <button
-              onClick={() => { setAuthMode("login"); setAuthError(""); }}
-              className={`flex-1 py-2 rounded-lg transition ${authMode === "login" ? "bg-indigo-600 text-white shadow-sm font-semibold" : "text-slate-400 hover:text-white"}`}
-            >
-              Giriş Yap
-            </button>
-            <button
-              onClick={() => { setAuthMode("register"); setAuthError(""); }}
-              className={`flex-1 py-2 rounded-lg transition ${authMode === "register" ? "bg-indigo-600 text-white shadow-sm font-semibold" : "text-slate-400 hover:text-white"}`}
-            >
-              Kayıt Ol
-            </button>
-          </div>
+          
+          {authMode === "forgot" ? (
+            <div className="space-y-1 text-center">
+              <h2 className="text-sm font-bold text-white">Şifre Sıfırlama</h2>
+              <p className="text-[11px] text-slate-400">
+                Kayıtlı e-posta adresinizi girin, sıfırlama bağlantısını gönderelim.
+              </p>
+            </div>
+          ) : (
+            <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-medium">
+              <button
+                onClick={() => { setAuthMode("login"); setAuthError(""); setAuthSuccess(""); }}
+                className={`flex-1 py-2 rounded-lg transition ${authMode === "login" ? "bg-indigo-600 text-white shadow-sm font-semibold" : "text-slate-400 hover:text-white"}`}
+              >
+                Giriş Yap
+              </button>
+              <button
+                onClick={() => { setAuthMode("register"); setAuthError(""); setAuthSuccess(""); }}
+                className={`flex-1 py-2 rounded-lg transition ${authMode === "register" ? "bg-indigo-600 text-white shadow-sm font-semibold" : "text-slate-400 hover:text-white"}`}
+              >
+                Kayıt Ol
+              </button>
+            </div>
+          )}
 
+          {/* Hata Bildirimi (Sadeleştirilmiş) */}
           {authError && (
             <div className="p-3 bg-rose-950/60 border border-rose-500/40 rounded-xl text-xs text-rose-300 leading-relaxed">
               {authError}
+            </div>
+          )}
+
+          {/* Başarı Bildirimi */}
+          {authSuccess && (
+            <div className="p-3 bg-emerald-950/60 border border-emerald-500/40 rounded-xl text-xs text-emerald-300 leading-relaxed">
+              {authSuccess}
             </div>
           )}
 
@@ -548,20 +590,33 @@ export default function MobileDashboard() {
               />
             </div>
 
-            <div className="space-y-1">
-              <label className="text-[11px] font-medium text-slate-400 flex items-center gap-1">
-                <Lock size={12} /> Şifre
-              </label>
-              <input
-                type="password"
-                required
-                minLength={6}
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                placeholder="En az 6 karakter"
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-              />
-            </div>
+            {authMode !== "forgot" && (
+              <div className="space-y-1">
+                <div className="flex justify-between items-center text-[11px]">
+                  <label className="font-medium text-slate-400 flex items-center gap-1">
+                    <Lock size={12} /> Şifre
+                  </label>
+                  {authMode === "login" && (
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMode("forgot"); setAuthError(""); setAuthSuccess(""); }}
+                      className="text-indigo-400 hover:underline"
+                    >
+                      Şifremi unuttum?
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="En az 6 karakter"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            )}
 
             <button
               type="submit"
@@ -572,11 +627,27 @@ export default function MobileDashboard() {
                 <Loader2 size={16} className="animate-spin" />
               ) : (
                 <>
-                  <span>{authMode === "login" ? "Giriş Yap & Başla" : "Ekibe Katıl & Kayıt Ol"}</span>
+                  <span>
+                    {authMode === "login" && "Giriş Yap & Başla"}
+                    {authMode === "register" && "Ekibe Katıl & Kayıt Ol"}
+                    {authMode === "forgot" && "Sıfırlama Bağlantısı Gönder"}
+                  </span>
                   <ArrowRight size={14} />
                 </>
               )}
             </button>
+
+            {authMode === "forgot" && (
+              <div className="text-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode("login"); setAuthError(""); setAuthSuccess(""); }}
+                  className="text-xs text-slate-400 hover:text-white transition"
+                >
+                  ← Giriş Ekranına Dön
+                </button>
+              </div>
+            )}
           </form>
         </div>
       </div>
