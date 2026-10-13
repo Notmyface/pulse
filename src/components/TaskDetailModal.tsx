@@ -14,7 +14,7 @@ import {
   Calendar,
   Trash2
 } from "lucide-react";
-import type { Task, Profile } from "@/types/database";
+import type { Task, TaskComment } from "@/types/database";
 import { formatTimeAgo } from "@/lib/utils";
 
 interface TaskDetailModalProps {
@@ -25,13 +25,8 @@ interface TaskDetailModalProps {
   onUpdateAssignee: (taskId: string, memberId: string, memberName: string) => void;
   onUpdatePriority: (taskId: string, priority: Task["priority"]) => void;
   onDeleteTask: (taskId: string) => void;
-}
-
-interface Comment {
-  id: string;
-  author: string;
-  content: string;
-  created_at: string;
+  comments: TaskComment[];
+  onAddComment: (taskId: string, content: string) => void;
 }
 
 export default function TaskDetailModal({
@@ -41,33 +36,19 @@ export default function TaskDetailModal({
   onUpdateStatus,
   onUpdateAssignee,
   onUpdatePriority,
-  onDeleteTask
+  onDeleteTask,
+  comments,
+  onAddComment
 }: TaskDetailModalProps) {
-  if (!task) return null;
-
   const [commentText, setCommentText] = useState("");
-  const [comments, setComments] = useState<Comment[]>([
-    {
-      id: "c1",
-      author: "Zeynep Yılmaz",
-      content: "Bu görevin teslim tarihini yarına kadar tamamlayabilir miyiz?",
-      created_at: new Date(Date.now() - 3600000 * 2).toISOString()
-    }
-  ]);
 
   const handleAddComment = () => {
-    if (!commentText.trim()) return;
-
-    const newComment: Comment = {
-      id: `comment-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      author: "Siz (Yönetici)",
-      content: commentText.trim(),
-      created_at: new Date().toISOString()
-    };
-
-    setComments(prev => [...prev, newComment]);
+    if (!task || !commentText.trim()) return;
+    onAddComment(task.id, commentText.trim());
     setCommentText("");
   };
+
+  if (!task) return null;
 
   const isDone = task.status === "done";
 
@@ -199,7 +180,7 @@ export default function TaskDetailModal({
               {comments.map((comment) => (
                 <div key={comment.id} className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60 text-xs space-y-1">
                   <div className="flex justify-between items-center text-[11px]">
-                    <span className="font-medium text-indigo-300">{comment.author}</span>
+                    <span className="font-medium text-indigo-300">{comment.author?.full_name || "Kullanıcı"}</span>
                     <span className="text-slate-400">{formatTimeAgo(comment.created_at)}</span>
                   </div>
                   <p className="text-slate-300 leading-relaxed">{comment.content}</p>

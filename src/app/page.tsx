@@ -26,10 +26,12 @@ import {
   User as UserIcon, 
   ArrowRight, 
   Loader2,
-  FolderPlus
+  FolderPlus,
+  UserPlus,
+  Share2
 } from "lucide-react";
 import { formatTimeAgo } from "@/lib/utils";
-import type { Task, ChatMessage, NotificationItem } from "@/types/database";
+import type { Task, TaskComment, ChatMessage, NotificationItem } from "@/types/database";
 import TaskDetailModal from "@/components/TaskDetailModal";
 import CreateTaskModal from "@/components/CreateTaskModal";
 import KanbanBoard from "@/components/KanbanBoard";
@@ -69,15 +71,18 @@ export default function MobileDashboard() {
   const [taskFilter, setTaskFilter] = useState<"all" | "assigned_to_me" | "urgent">("all");
   
   // Canlı Veritabanı State'leri
-  const [projects, setProjects] = useState<Array<{ id: string; name: string; color: string }>>([
-    { id: "default-proj", name: "Genel Çalışma Alanı", color: "#6366f1" }
+  const [projects, setProjects] = useState<Array<{ id: string; name: string; color: string; is_manager: boolean }>>([
+    { id: "default-proj", name: "Genel Çalışma Alanı", color: "#6366f1", is_manager: true }
   ]);
   const [activeProjectId, setActiveProjectId] = useState<string>("default-proj");
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [newProjectInput, setNewProjectInput] = useState("");
 
   const [teamMembers, setTeamMembers] = useState<Array<{ id: string; name: string; role: string }>>([]);
+  const [projectMemberships, setProjectMemberships] = useState<Array<{ project_id: string; user_id: string; is_manager: boolean }>>([]);
+  const [profiles, setProfiles] = useState<Array<{ id: string; email: string; full_name: string; role: string }>>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskComments, setTaskComments] = useState<Record<string, TaskComment[]>>({});
 
   interface ExtendedMessage extends ChatMessage {
     attachment?: UploadedFile;
@@ -98,6 +103,9 @@ export default function MobileDashboard() {
   const [isMentionOpen, setIsMentionOpen] = useState(false);
   const [mentionFilterText, setMentionFilterText] = useState("");
   const [newMessageText, setNewMessageText] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"member" | "manager">("member");
+  const [inviteStatus, setInviteStatus] = useState("");
 
   // 1. SERVICE WORKER KAYDI & OTURUM KONTROLÜ
   useEffect(() => {
@@ -111,6 +119,10 @@ export default function MobileDashboard() {
     if (typeof window !== "undefined") {
       const hash = window.location.hash || "";
       const search = window.location.search || "";
+      const inviteToken = new URLSearchParams(search).get("invite");
+      if (inviteToken) {
+        window.localStorage.setItem("pulse_pending_invite", inviteToken);
+      }
       if (hash.includes("type=recovery") || search.includes("type=recovery")) {
         setIsRecoveryMode(true);
       }
@@ -160,10 +172,21 @@ export default function MobileDashboard() {
   // 2. SUPABASE VERİLERİNİ ÇEKME
   const loadSupabaseData = async (userId: string, userName?: string) => {
     try {
+      const inviteToken = typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("invite") || window.localStorage.getItem("pulse_pending_invite")
+        : null;
+      if (inviteToken) {
+        const { data: inviteAccepted } = await supabase.rpc("accept_project_invite", { invite_token: inviteToken });
+        if (inviteAccepted) {
+          window.localStorage.removeItem("pulse_pending_invite");
+        }
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+
       // 1. Projeleri Çek
       const { data: projData } = await supabase.from("projects").select("*");
       if (projData && projData.length > 0) {
-        const formatted = projData.map((p: any) => ({ id: p.id, name: p.name, color: p.color_code || "#6366f1" }));
+        const formatted = projData.map((p: any) => ({ id: p.id, name: p.name, color: p.color_code || "#6366f1", is_manager: false }));
         setProjects(formatted);
         setActiveProjectId(formatted[0].id);
       } else {
@@ -175,51 +198,41 @@ export default function MobileDashboard() {
         }).select().single();
 
         if (newProj) {
-          setProjects([{ id: newProj.id, name: newProj.name, color: newProj.color_code }]);
+          setProjects([{ id: newProj.id, name: newProj.name, color: newProj.color_code, is_manager: true }]);
           setActiveProjectId(newProj.id);
         }
       }
 
-      // 2. Ekip Üyelerini Çek (Kendisini kesinlikle dahil et)
-      const { data: profData } = await supabase.from("profiles").select("*");
-      const members: Array<{ id: string; name: string; role: string }> = [];
+      // 2. Yalnızca erişilebilen projelerin üyelerini ve profillerini çek
+      const { data: membershipData } = await supabase.from("project_members").select("project_id, user_id, is_manager");
+      const { data: profData } = await supabase.from("profiles").select("id, email, full_name, role");
+      setProjectMemberships((membershipData || []) as Array<{ project_id: string; user_id: string; is_manager: boolean }>);
+      setProfiles((profData || []) as Array<{ id: string; email: string; full_name: string; role: string }>);
 
-      // Önce mevcut kullanıcıyı ekle
-      members.push({
-        id: userId,
-        name: `${userName || "Ben"} (Kendim)`,
-        role: "Yönetici"
-      });
+      const loadedProfiles = (profData || []) as Array<{ id: string; email: string; full_name: string; role: string }>;
+      const { data: commentData } = await supabase.from("task_comments").select("*").order("created_at", { ascending: true });
+      const commentsByTask = (commentData || []).reduce<Record<string, TaskComment[]>>((grouped, comment: TaskComment) => {
+        const author = loadedProfiles.find(profile => profile.id === comment.user_id);
+        const taskComment = {
+          ...comment,
+          author: author ? { ...author, role: author.role as "admin" | "manager" | "member", created_at: "" } : undefined
+        };
+        grouped[comment.task_id] = [...(grouped[comment.task_id] || []), taskComment];
+        return grouped;
+      }, {});
+      setTaskComments(commentsByTask);
 
-      if (profData && profData.length > 0) {
-        profData.forEach((p: any) => {
-          if (p.id !== userId) {
-            members.push({
-              id: p.id,
-              name: p.full_name || p.email,
-              role: p.role === "admin" ? "Yönetici" : "Üye"
-            });
-          }
-        });
-      }
-      setTeamMembers(members);
-      if (members.length > 1) {
-        setActiveDmUser(members[1].id);
-      }
-
-      // 3. Görevleri Çek
+      // 3. Görevleri ve mesajları yalnızca RLS'nin izin verdiği kapsamda çek
       const { data: taskData } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
       if (taskData) setTasks(taskData);
 
-      // 4. Mesajları Çek
       const { data: msgData } = await supabase.from("chat_messages").select("*").order("created_at", { ascending: true });
       if (msgData) setMessages(msgData);
 
-      // 5. Bildirimleri Çek
       const { data: notifData } = await supabase.from("notifications").select("*").order("created_at", { ascending: false });
       if (notifData) setNotifications(notifData);
 
-      // 6. Realtime Soket Dinleyici
+      // 4. Realtime Soket Dinleyici
       supabase.channel("pulse-live-sync")
         .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, () => {
           supabase.from("tasks").select("*").order("created_at", { ascending: false }).then(({ data }) => {
@@ -227,7 +240,12 @@ export default function MobileDashboard() {
           });
         })
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages" }, (payload) => {
-          setMessages(prev => [...prev, payload.new as ExtendedMessage]);
+          setMessages(prev => {
+            const message = payload.new as ExtendedMessage;
+            return prev.some(existingMessage => existingMessage.id === message.id)
+              ? prev
+              : [...prev, message];
+          });
         })
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications" }, (payload) => {
           setNotifications(prev => [payload.new as NotificationItem, ...prev]);
@@ -238,6 +256,30 @@ export default function MobileDashboard() {
       console.error("Veri yükleme hatası:", err);
     }
   };
+
+  useEffect(() => {
+    const activeMemberships = projectMemberships.filter(member => member.project_id === activeProjectId);
+    setProjects(prev => prev.map(project => ({
+      ...project,
+      is_manager: projectMemberships.some(member =>
+        member.project_id === project.id && member.user_id === currentUser?.id && member.is_manager
+      )
+    })));
+    const members = activeMemberships
+      .map(member => {
+        const profile = profiles.find(item => item.id === member.user_id);
+        if (!profile) return null;
+        return {
+          id: profile.id,
+          name: profile.id === currentUser?.id ? `${profile.full_name || "Ben"} (Kendim)` : (profile.full_name || profile.email),
+          role: member.is_manager ? "Proje Yöneticisi" : "Üye"
+        };
+      })
+      .filter((member): member is { id: string; name: string; role: string } => member !== null);
+    setTeamMembers(members);
+    const firstOtherMember = members.find(member => member.id !== currentUser?.id);
+    setActiveDmUser(firstOtherMember?.id || "");
+  }, [activeProjectId, currentUser, profiles, projectMemberships]);
 
   // 3. GİRİŞ & KAYIT & ŞİFRE SIFIRLAMA İŞLEMİ
   const handleAuthSubmit = async (e: React.FormEvent) => {
@@ -377,7 +419,7 @@ export default function MobileDashboard() {
       }).select().single();
 
       if (data) {
-        const newProj = { id: data.id, name: data.name, color: data.color_code };
+        const newProj = { id: data.id, name: data.name, color: data.color_code, is_manager: true };
         setProjects(prev => [...prev, newProj]);
         setActiveProjectId(data.id);
         setNewProjectInput("");
@@ -385,6 +427,70 @@ export default function MobileDashboard() {
       }
     } catch (err) {
       console.error("Proje eklenemedi:", err);
+    }
+  };
+
+  const handleInviteMember = async () => {
+    const email = inviteEmail.trim().toLowerCase();
+    const activeProject = projects.find(project => project.id === activeProjectId);
+    if (!email || !currentUser || !activeProject?.is_manager) return;
+
+    setInviteStatus("");
+    const { data: profile } = await supabase.from("profiles").select("id").eq("email", email).maybeSingle();
+
+    if (profile) {
+      const { error } = await supabase.from("project_members").upsert({
+        project_id: activeProjectId,
+        user_id: profile.id,
+        is_manager: inviteRole === "manager"
+      }, { onConflict: "project_id,user_id" });
+
+      if (error) {
+        setInviteStatus("Kullanıcı projeye eklenemedi.");
+        return;
+      }
+      setInviteStatus("Kullanıcı projeye eklendi.");
+      setInviteEmail("");
+      const { data: membershipData } = await supabase.from("project_members").select("project_id, user_id, is_manager");
+      setProjectMemberships((membershipData || []) as Array<{ project_id: string; user_id: string; is_manager: boolean }>);
+      return;
+    }
+
+    const { data: invite, error } = await supabase.from("project_invites").insert({
+      project_id: activeProjectId,
+      email,
+      invited_by: currentUser.id,
+      role: inviteRole
+    }).select("token").single();
+
+    if (error || !invite) {
+      setInviteStatus("Davet oluşturulamadı.");
+      return;
+    }
+
+    const inviteUrl = `${window.location.origin}/?invite=${invite.token}`;
+    const shareText = `${activeProject.name} projesine katılmak için bu bağlantıyı aç: ${inviteUrl}`;
+    if (navigator.share) {
+      await navigator.share({ title: `${activeProject.name} daveti`, text: shareText }).catch(() => undefined);
+    } else {
+      window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, "_blank", "noopener,noreferrer");
+    }
+    setInviteStatus("Davet bağlantısı hazırlandı.");
+    setInviteEmail("");
+  };
+
+  const handleToggleManager = async (memberId: string, isManager: boolean) => {
+    if (!projects.find(project => project.id === activeProjectId)?.is_manager || memberId === currentUser?.id) return;
+    const { error } = await supabase.from("project_members")
+      .update({ is_manager: !isManager })
+      .eq("project_id", activeProjectId)
+      .eq("user_id", memberId);
+    if (!error) {
+      setProjectMemberships(prev => prev.map(member =>
+        member.project_id === activeProjectId && member.user_id === memberId
+          ? { ...member, is_manager: !isManager }
+          : member
+      ));
     }
   };
 
@@ -415,6 +521,31 @@ export default function MobileDashboard() {
     }
   };
 
+  const handleAddTaskComment = async (taskId: string, content: string) => {
+    if (!currentUser) return;
+
+    const { data, error } = await supabase.from("task_comments").insert({
+      task_id: taskId,
+      user_id: currentUser.id,
+      content
+    }).select("*").single();
+
+    if (error || !data) {
+      console.error("Görev yorumu eklenemedi:", error);
+      return;
+    }
+
+    const author = profiles.find(profile => profile.id === currentUser.id);
+    const taskComment: TaskComment = {
+      ...data,
+      author: author ? { ...author, role: author.role as "admin" | "manager" | "member", created_at: "" } : undefined
+    };
+    setTaskComments(prev => ({
+      ...prev,
+      [taskId]: [...(prev[taskId] || []), taskComment]
+    }));
+  };
+
   // Yeni Görev Oluştur
   const handleCreateTask = async (newTaskData: Omit<Task, "id" | "created_at">, newProjectTitle?: string) => {
     if (!currentUser) return;
@@ -432,7 +563,7 @@ export default function MobileDashboard() {
 
         if (createdProj) {
           targetProjectId = createdProj.id;
-          const p = { id: createdProj.id, name: createdProj.name, color: createdProj.color_code };
+          const p = { id: createdProj.id, name: createdProj.name, color: createdProj.color_code, is_manager: true };
           setProjects(prev => [...prev, p]);
           setActiveProjectId(createdProj.id);
         }
@@ -474,7 +605,7 @@ export default function MobileDashboard() {
 
     try {
       const { data } = await supabase.from("chat_messages").insert({
-        project_id: isDm ? null : activeProjectId,
+        project_id: activeProjectId,
         sender_id: currentUser.id,
         recipient_id: isDm ? activeDmUser : null,
         content: newMessageText,
@@ -537,9 +668,9 @@ export default function MobileDashboard() {
 
   const activeChatMessages = messages.filter(m => {
     if (chatMode === "channel") {
-      return !m.is_direct_message;
+      return m.project_id === activeProjectId && !m.is_direct_message;
     } else {
-      return m.is_direct_message && (
+      return m.project_id === activeProjectId && m.is_direct_message && (
         (m.sender_id === currentUser?.id && m.recipient_id === activeDmUser) ||
         (m.sender_id === activeDmUser && m.recipient_id === currentUser?.id)
       );
@@ -1256,6 +1387,42 @@ export default function MobileDashboard() {
               </h2>
             </div>
 
+            {activeProject?.is_manager && (
+              <div className="p-3 bg-slate-900 border border-indigo-500/30 rounded-xl space-y-2">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+                  <UserPlus size={14} className="text-indigo-400" /> Projeye davet et
+                </div>
+                <div className="flex gap-1.5">
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(event) => setInviteEmail(event.target.value)}
+                    placeholder="E-posta adresi"
+                    className="min-w-0 flex-1 bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                  />
+                  <select
+                    value={inviteRole}
+                    onChange={(event) => setInviteRole(event.target.value as "member" | "manager")}
+                    className="bg-slate-800 border border-slate-700 rounded-lg px-2 text-[11px] text-slate-200 focus:outline-none"
+                    aria-label="Davet rolü"
+                  >
+                    <option value="member">Üye</option>
+                    <option value="manager">Yönetici</option>
+                  </select>
+                  <button
+                    onClick={handleInviteMember}
+                    disabled={!inviteEmail.trim()}
+                    className="p-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-lg transition"
+                    title="Davet gönder"
+                  >
+                    <Share2 size={15} />
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400">Kayıtlı kullanıcı doğrudan eklenir; kayıtlı değilse WhatsApp veya paylaşım bağlantısı açılır.</p>
+                {inviteStatus && <p className="text-[10px] text-emerald-400">{inviteStatus}</p>}
+              </div>
+            )}
+
             <div className="space-y-2">
               {teamMembers.map((member) => (
                 <div key={member.id} className="p-3 bg-slate-900 border border-slate-800 rounded-xl flex items-center justify-between">
@@ -1269,16 +1436,27 @@ export default function MobileDashboard() {
                     </div>
                   </div>
                   {member.id !== currentUser.id && (
-                    <button
-                      onClick={() => {
-                        setActiveDmUser(member.id);
-                        setChatMode("dm");
-                        setActiveTab("chat");
-                      }}
-                      className="text-[11px] px-2.5 py-1 rounded-lg bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600 hover:text-white transition"
-                    >
-                      Özel DM
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {activeProject?.is_manager && (
+                        <button
+                          onClick={() => handleToggleManager(member.id, member.role === "Proje Yöneticisi")}
+                          className="text-[10px] text-slate-400 hover:text-indigo-300 transition"
+                          title="Proje yöneticisi yetkisini değiştir"
+                        >
+                          {member.role === "Proje Yöneticisi" ? "Yetkiyi kaldır" : "Yönetici yap"}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          setActiveDmUser(member.id);
+                          setChatMode("dm");
+                          setActiveTab("chat");
+                        }}
+                        className="text-[11px] px-2.5 py-1 rounded-lg bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600 hover:text-white transition"
+                      >
+                        Özel DM
+                      </button>
+                    </div>
                   )}
                 </div>
               ))}
@@ -1329,6 +1507,8 @@ export default function MobileDashboard() {
       <TaskDetailModal 
         task={selectedTask}
         teamMembers={teamMembers}
+        comments={selectedTask ? taskComments[selectedTask.id] || [] : []}
+        onAddComment={handleAddTaskComment}
         onClose={() => setSelectedTask(null)}
         onUpdateStatus={(id, s) => {
           toggleTaskStatus(id);

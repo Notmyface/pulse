@@ -40,6 +40,15 @@ export interface Task {
   project?: Project;
 }
 
+export interface TaskComment {
+  id: string;
+  task_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+  author?: Profile;
+}
+
 export interface ChatMessage {
   id: string;
   project_id?: string;
