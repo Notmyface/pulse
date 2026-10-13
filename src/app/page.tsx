@@ -55,6 +55,14 @@ export default function MobileDashboard() {
   const [authError, setAuthError] = useState("");
   const [authSuccess, setAuthSuccess] = useState("");
 
+  // Şifre Sıfırlama (Recovery) Modu
+  const [isRecoveryMode, setIsRecoveryMode] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [recoveryError, setRecoveryError] = useState("");
+  const [recoverySuccess, setRecoverySuccess] = useState("");
+
   // Uygulama Navigasyon State'leri
   const [activeTab, setActiveTab] = useState<"tasks" | "chat" | "notifications" | "team">("tasks");
   const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
@@ -99,6 +107,15 @@ export default function MobileDashboard() {
       });
     }
 
+    // URL'de şifre sıfırlama parametresi var mı kontrol et
+    if (typeof window !== "undefined") {
+      const hash = window.location.hash || "";
+      const search = window.location.search || "";
+      if (hash.includes("type=recovery") || search.includes("type=recovery")) {
+        setIsRecoveryMode(true);
+      }
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         const u = {
@@ -112,7 +129,12 @@ export default function MobileDashboard() {
       setIsCheckingAuth(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Şifre sıfırlama linkine tıklandıysa
+      if (event === "PASSWORD_RECOVERY") {
+        setIsRecoveryMode(true);
+      }
+
       if (session?.user) {
         const u = {
           id: session.user.id,
@@ -301,6 +323,45 @@ export default function MobileDashboard() {
       setAuthError("İşlem gerçekleştirilemedi. Lütfen tekrar deneyin.");
     } finally {
       setAuthLoading(false);
+    }
+  };
+
+  // 4. ŞİFRE GÜNCELLEME İŞLEMİ (Şifre sıfırlama linkine tıklandığında)
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRecoveryError("");
+    setRecoverySuccess("");
+
+    if (newPassword.length < 6) {
+      setRecoveryError("Şifreniz en az 6 karakter olmalıdır.");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setRecoveryError("Şifreler birbiriyle eşleşmiyor.");
+      return;
+    }
+
+    setRecoveryLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword
+      });
+
+      if (error) throw error;
+
+      setRecoverySuccess("Şifreniz başarıyla güncellendi! Yönlendiriliyorsunuz...");
+      setTimeout(() => {
+        setIsRecoveryMode(false);
+        if (typeof window !== "undefined") {
+          window.history.replaceState(null, "", window.location.pathname);
+        }
+      }, 1200);
+    } catch (err: any) {
+      console.error(err);
+      setRecoveryError("Şifre güncellenemedi. Lütfen tekrar deneyin.");
+    } finally {
+      setRecoveryLoading(false);
     }
   };
 
@@ -497,6 +558,88 @@ export default function MobileDashboard() {
           ⚡
         </div>
         <p className="text-xs text-slate-400">Pulse Çalışma Alanı Yükleniyor...</p>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // ŞİFRE SIFIRLAMA LİNKİNE TIKLANDIYSA: YENİ ŞİFRE BELİRLEME EKRANI
+  // =========================================================================
+  if (isRecoveryMode) {
+    return (
+      <div className="min-h-screen max-w-md mx-auto w-full bg-slate-950 text-slate-100 flex flex-col justify-center px-5 py-8 shadow-2xl relative overflow-hidden">
+        <div className="text-center space-y-2 mb-6">
+          <div className="w-14 h-14 rounded-3xl bg-indigo-600 flex items-center justify-center font-bold text-3xl text-white shadow-indigo-500/40 shadow-2xl mx-auto">
+            🔑
+          </div>
+          <h1 className="text-xl font-bold tracking-tight text-white">
+            Yeni Şifrenizi Belirleyin
+          </h1>
+          <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
+            Hesabınız için en az 6 karakterli yeni bir şifre oluşturun.
+          </p>
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
+          {recoveryError && (
+            <div className="p-3 bg-rose-950/60 border border-rose-500/40 rounded-xl text-xs text-rose-300 leading-relaxed">
+              {recoveryError}
+            </div>
+          )}
+
+          {recoverySuccess && (
+            <div className="p-3 bg-emerald-950/60 border border-emerald-500/40 rounded-xl text-xs text-emerald-300 leading-relaxed">
+              {recoverySuccess}
+            </div>
+          )}
+
+          <form onSubmit={handleUpdatePassword} className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-[11px] font-medium text-slate-400 flex items-center gap-1">
+                <Lock size={12} /> Yeni Şifre
+              </label>
+              <input
+                type="password"
+                required
+                minLength={6}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="En az 6 karakter"
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] font-medium text-slate-400 flex items-center gap-1">
+                <Lock size={12} /> Yeni Şifre (Tekrar)
+              </label>
+              <input
+                type="password"
+                required
+                minLength={6}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Şifrenizi doğrulayın"
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={recoveryLoading}
+              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl shadow-lg shadow-indigo-600/30 transition flex items-center justify-center gap-1.5 disabled:opacity-50 mt-3"
+            >
+              {recoveryLoading ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <>
+                  <span>Şifremi Güncelle & Giriş Yap</span>
+                  <ArrowRight size={14} />
+                </>
+              )}
+            </button>
+          </form>
+        </div>
       </div>
     );
   }
