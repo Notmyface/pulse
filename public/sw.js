@@ -1,6 +1,6 @@
-// Pulse Service Worker (Web Push & Offline Desteği)
-const CACHE_NAME = "pulse-cache-v1";
-const OFFLINE_URLS = ["/", "/manifest.json"];
+// Pulse Service Worker (Web Push & PWA Desteği)
+const CACHE_NAME = "pulse-cache-v2";
+const OFFLINE_URLS = ["/", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -26,6 +26,24 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// PWA Yüklenebilirlik Kriteri İçin Fetch Olay Dinleyicisi
+self.addEventListener("fetch", (event) => {
+  // Yalnızca GET isteklerini ele al
+  if (event.request.method !== "GET") return;
+
+  event.respondWith(
+    fetch(event.request)
+      .then((networkResponse) => {
+        return networkResponse;
+      })
+      .catch(() => {
+        return caches.match(event.request).then((cachedResponse) => {
+          return cachedResponse || caches.match("/");
+        });
+      })
+  );
+});
+
 // Kilit Ekranı / Mobil Push Bildirimi Olayı (Push Event)
 self.addEventListener("push", (event) => {
   let data = {
@@ -44,8 +62,8 @@ self.addEventListener("push", (event) => {
 
   const options = {
     body: data.body,
-    icon: "/icon-192.png",
-    badge: "/icon-192.png",
+    icon: "/icon.svg",
+    badge: "/icon.svg",
     vibrate: [100, 50, 100],
     data: {
       url: data.url || "/"
