@@ -72,6 +72,7 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
   const today = new Date();
   const [calendarMonth, setCalendarMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
   const [selectedDate, setSelectedDate] = useState(dateKey(today));
+  const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
   const [filter, setFilter] = useState<"all" | "open" | "done">("open");
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
@@ -118,6 +119,13 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
 
   const shiftMonth = (amount: number) => {
     setCalendarMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + amount, 1));
+  };
+
+  const handleCalendarDayClick = (date: Date) => {
+    const key = dateKey(date);
+    setSelectedDate(key);
+    setDueAt(`${key}T09:00`);
+    setShowDetails(true);
   };
 
   return (
@@ -173,7 +181,16 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
         )}
       </form>
 
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-3">
+      <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-xl p-1">
+        <button onClick={() => setViewMode("calendar")} className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] ${viewMode === "calendar" ? "bg-indigo-600 text-white" : "text-slate-400"}`}>
+          <CalendarDays size={14} /> Takvim
+        </button>
+        <button onClick={() => setViewMode("list")} className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] ${viewMode === "list" ? "bg-indigo-600 text-white" : "text-slate-400"}`}>
+          <CheckCircle2 size={14} /> Liste
+        </button>
+      </div>
+
+      {viewMode === "calendar" && <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-3">
         <div className="flex items-center justify-between">
           <button onClick={() => shiftMonth(-1)} className="p-1 text-slate-400 hover:text-white" title="Önceki ay"><ChevronLeft size={16} /></button>
           <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200"><CalendarDays size={14} className="text-indigo-400" />{calendarMonth.toLocaleDateString("tr-TR", { month: "long", year: "numeric" })}</div>
@@ -190,7 +207,7 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
             const isSelected = selectedDate === key;
             const isToday = dateKey(today) === key;
             return (
-              <button key={key} onClick={() => setSelectedDate(key)} className={`aspect-square rounded-lg flex flex-col items-center justify-center text-[11px] transition ${isSelected ? "bg-indigo-600 text-white" : isToday ? "border border-indigo-500/60 text-indigo-300" : "text-slate-300 hover:bg-slate-800"}`}>
+              <button key={key} onClick={() => handleCalendarDayClick(date)} className={`aspect-square rounded-lg flex flex-col items-center justify-center text-[11px] transition ${isSelected ? "bg-indigo-600 text-white" : isToday ? "border border-indigo-500/60 text-indigo-300" : "text-slate-300 hover:bg-slate-800"}`} title={`${date.toLocaleDateString("tr-TR")} tarihinde todo ekle veya görüntüle`}>
                 <span>{date.getDate()}</span>
                 {dayTodos.length > 0 && <span className={`w-1 h-1 rounded-full mt-0.5 ${dayTodos.some(todo => todo.status === "todo") ? "bg-amber-400" : "bg-emerald-400"}`} />}
               </button>
@@ -200,19 +217,19 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
         <div className="flex gap-1.5 border-t border-slate-800 pt-2">
           {(["all", "open", "done"] as const).map(value => <button key={value} onClick={() => setFilter(value)} className={`flex-1 py-1 rounded-lg text-[10px] ${filter === value ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-400"}`}>{value === "all" ? "Tümü" : value === "open" ? "Açık" : "Tamamlandı"}</button>)}
         </div>
-      </div>
+      </div>}
 
-      {selectedTodos.length > 0 && (
+      {viewMode === "calendar" && selectedTodos.length > 0 && (
         <div className="space-y-2">
           <h3 className="text-[11px] font-semibold text-slate-400">{new Date(`${selectedDate}T12:00:00`).toLocaleDateString("tr-TR", { day: "numeric", month: "long" })}</h3>
           {selectedTodos.map(todo => <TodoRow key={todo.id} todo={todo} onToggle={onToggle} onDelete={onDelete} onPostpone={onPostpone} />)}
         </div>
       )}
 
-      <div className="space-y-2">
-        <h3 className="text-[11px] font-semibold text-slate-400">Tüm kişisel işler</h3>
+      {viewMode === "list" && <div className="space-y-2">
+        <h3 className="text-[11px] font-semibold text-slate-400">Tüm kişisel işler ({visibleTodos.length})</h3>
         {visibleTodos.length === 0 ? <div className="text-center py-8 text-xs text-slate-500 bg-slate-900/40 rounded-xl border border-dashed border-slate-800">Henüz kişisel todo yok.</div> : visibleTodos.map(todo => <TodoRow key={todo.id} todo={todo} onToggle={onToggle} onDelete={onDelete} onPostpone={onPostpone} />)}
-      </div>
+      </div>}
     </div>
   );
 }
