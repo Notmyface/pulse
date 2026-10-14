@@ -2,6 +2,7 @@ export type UserRole = 'admin' | 'manager' | 'member';
 export type TaskStatus = 'todo' | 'in_progress' | 'done';
 export type TaskPriority = 'urgent' | 'high' | 'normal' | 'low';
 export type NotificationType = 'task_assigned' | 'task_completed' | 'mention' | 'new_comment' | 'direct_message';
+export type PersonalTodoStatus = 'todo' | 'done';
 
 export interface Profile {
   id: string;
@@ -47,6 +48,20 @@ export interface TaskComment {
   content: string;
   created_at: string;
   author?: Profile;
+}
+
+export interface PersonalTodo {
+  id: string;
+  user_id: string;
+  title: string;
+  note?: string;
+  priority: TaskPriority;
+  status: PersonalTodoStatus;
+  due_at?: string;
+  remind_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ChatMessage {

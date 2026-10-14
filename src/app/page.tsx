@@ -28,10 +28,11 @@ import {
   Loader2,
   FolderPlus,
   UserPlus,
-  Share2
+  Share2,
+  ListTodo
 } from "lucide-react";
 import { formatTimeAgo } from "@/lib/utils";
-import type { Task, TaskComment, ChatMessage, NotificationItem } from "@/types/database";
+import type { PersonalTodo, Task, TaskComment, ChatMessage, NotificationItem, TaskPriority } from "@/types/database";
 import TaskDetailModal from "@/components/TaskDetailModal";
 import CreateTaskModal from "@/components/CreateTaskModal";
 import KanbanBoard from "@/components/KanbanBoard";
@@ -39,6 +40,7 @@ import MentionPopover from "@/components/MentionPopover";
 import FileUploadButton, { type UploadedFile } from "@/components/FileUploadButton";
 import PushNotificationToggle from "@/components/PushNotificationToggle";
 import InstallPrompt from "@/components/InstallPrompt";
+import PersonalTodoPanel from "@/components/PersonalTodoPanel";
 import { createClient } from "@/lib/supabase/client";
 
 export default function MobileDashboard() {
@@ -66,7 +68,7 @@ export default function MobileDashboard() {
   const [recoverySuccess, setRecoverySuccess] = useState("");
 
   // Uygulama Navigasyon State'leri
-  const [activeTab, setActiveTab] = useState<"tasks" | "chat" | "notifications" | "team">("tasks");
+  const [activeTab, setActiveTab] = useState<"personal" | "tasks" | "chat" | "notifications" | "team">("tasks");
   const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
   const [taskFilter, setTaskFilter] = useState<"all" | "assigned_to_me" | "urgent">("all");
   
@@ -83,6 +85,7 @@ export default function MobileDashboard() {
   const [profiles, setProfiles] = useState<Array<{ id: string; email: string; full_name: string; role: string }>>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskComments, setTaskComments] = useState<Record<string, TaskComment[]>>({});
+  const [personalTodos, setPersonalTodos] = useState<PersonalTodo[]>([]);
 
   interface ExtendedMessage extends ChatMessage {
     attachment?: UploadedFile;
@@ -160,6 +163,7 @@ export default function MobileDashboard() {
         setTasks([]);
         setMessages([]);
         setNotifications([]);
+        setPersonalTodos([]);
       }
       setIsCheckingAuth(false);
     });
@@ -231,6 +235,23 @@ export default function MobileDashboard() {
 
       const { data: notifData } = await supabase.from("notifications").select("*").order("created_at", { ascending: false });
       if (notifData) setNotifications(notifData);
+
+      const { data: personalTodoData } = await supabase.from("personal_todos").select("*").eq("user_id", userId).order("created_at", { ascending: false });
+      if (personalTodoData) {
+        setPersonalTodos(personalTodoData as PersonalTodo[]);
+        const dueReminders = (personalTodoData as PersonalTodo[]).filter(todo =>
+          todo.status === "todo" && todo.remind_at && new Date(todo.remind_at) <= new Date()
+        );
+        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+          dueReminders.forEach(todo => {
+            const notificationKey = `pulse-reminder-${todo.id}-${todo.remind_at}`;
+            if (!window.localStorage.getItem(notificationKey)) {
+              new Notification("Pulse kişisel hatırlatıcı", { body: todo.title });
+              window.localStorage.setItem(notificationKey, "shown");
+            }
+          });
+        }
+      }
 
       // 4. Realtime Soket Dinleyici
       supabase.channel("pulse-live-sync")
@@ -544,6 +565,52 @@ export default function MobileDashboard() {
       ...prev,
       [taskId]: [...(prev[taskId] || []), taskComment]
     }));
+  };
+
+  const handleCreatePersonalTodo = async (todo: {
+    title: string;
+    note?: string;
+    priority: TaskPriority;
+    due_at?: string;
+    remind_at?: string;
+  }) => {
+    if (!currentUser) return;
+    const { data, error } = await supabase.from("personal_todos").insert({
+      user_id: currentUser.id,
+      ...todo
+    }).select().single();
+    if (error || !data) {
+      console.error("Kişisel todo eklenemedi:", error);
+      return;
+    }
+    setPersonalTodos(prev => [data as PersonalTodo, ...prev]);
+  };
+
+  const handleTogglePersonalTodo = async (todo: PersonalTodo) => {
+    const isDone = todo.status === "done";
+    const update = {
+      status: isDone ? "todo" : "done",
+      completed_at: isDone ? null : new Date().toISOString()
+    };
+    const { error } = await supabase.from("personal_todos").update(update).eq("id", todo.id).eq("user_id", currentUser?.id);
+    if (!error) {
+      setPersonalTodos(prev => prev.map(item => item.id === todo.id ? { ...item, ...update } as PersonalTodo : item));
+    }
+  };
+
+  const handleDeletePersonalTodo = async (todoId: string) => {
+    const { error } = await supabase.from("personal_todos").delete().eq("id", todoId).eq("user_id", currentUser?.id);
+    if (!error) setPersonalTodos(prev => prev.filter(todo => todo.id !== todoId));
+  };
+
+  const handlePostponePersonalTodo = async (todo: PersonalTodo, days: number) => {
+    const nextDueDate = todo.due_at ? new Date(todo.due_at) : new Date();
+    nextDueDate.setDate(nextDueDate.getDate() + days);
+    const nextReminder = todo.remind_at ? new Date(todo.remind_at) : undefined;
+    nextReminder?.setDate(nextReminder.getDate() + days);
+    const update = { due_at: nextDueDate.toISOString(), remind_at: nextReminder?.toISOString() || null };
+    const { error } = await supabase.from("personal_todos").update(update).eq("id", todo.id).eq("user_id", currentUser?.id);
+    if (!error) setPersonalTodos(prev => prev.map(item => item.id === todo.id ? { ...item, ...update } as PersonalTodo : item));
   };
 
   // Yeni Görev Oluştur
@@ -1028,6 +1095,17 @@ export default function MobileDashboard() {
       <main className="flex-1 overflow-y-auto px-4 py-3 pb-24">
         <InstallPrompt />
 
+        {/* --- TAB: KİŞİSEL TODO --- */}
+        {activeTab === "personal" && (
+          <PersonalTodoPanel
+            todos={personalTodos}
+            onCreate={handleCreatePersonalTodo}
+            onToggle={handleTogglePersonalTodo}
+            onDelete={handleDeletePersonalTodo}
+            onPostpone={handlePostponePersonalTodo}
+          />
+        )}
+
         {/* --- TAB: GÖREVLER (TASKS) --- */}
         {activeTab === "tasks" && (
           <div className="space-y-4">
@@ -1466,7 +1544,15 @@ export default function MobileDashboard() {
       </main>
 
       {/* 3. MOBİL ALT NAVİGASYON */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-slate-900/95 backdrop-blur-lg border-t border-slate-800/80 px-6 py-2.5 pb-safe-bottom flex justify-between items-center z-40">
+      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-slate-900/95 backdrop-blur-lg border-t border-slate-800/80 px-3 py-2.5 pb-safe-bottom flex justify-between items-center z-40">
+        <button
+          onClick={() => setActiveTab("personal")}
+          className={`flex flex-col items-center gap-1 transition ${activeTab === "personal" ? "text-indigo-400 font-semibold" : "text-slate-400 hover:text-slate-300"}`}
+        >
+          <ListTodo size={20} />
+          <span className="text-[10px]">Kişisel</span>
+        </button>
+
         <button 
           onClick={() => setActiveTab("tasks")}
           className={`flex flex-col items-center gap-1 transition ${activeTab === "tasks" ? "text-indigo-400 font-semibold" : "text-slate-400 hover:text-slate-300"}`}

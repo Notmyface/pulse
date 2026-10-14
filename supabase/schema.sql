@@ -98,6 +98,24 @@ CREATE TABLE IF NOT EXISTS public.tasks (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 5.1 KİŞİSEL TODO'LAR (Yalnızca sahibinin görebileceği işler)
+CREATE TABLE IF NOT EXISTS public.personal_todos (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    note TEXT,
+    priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('urgent', 'high', 'normal', 'low')),
+    status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'done')),
+    due_at TIMESTAMPTZ,
+    remind_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS personal_todos_user_due_idx
+    ON public.personal_todos (user_id, due_at);
+
 -- 6. GÖREV İÇİ YORUMLAR (TASK COMMENTS / THREADS)
 CREATE TABLE IF NOT EXISTS public.task_comments (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -213,6 +231,7 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.project_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.personal_todos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.task_comments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attachments ENABLE ROW LEVEL SECURITY;
@@ -279,6 +298,10 @@ DROP POLICY IF EXISTS "Project members accessible" ON public.project_members;
 DROP POLICY IF EXISTS "Tasks readable by team" ON public.tasks;
 DROP POLICY IF EXISTS "Tasks insertable by authenticated" ON public.tasks;
 DROP POLICY IF EXISTS "Tasks updatable by authenticated" ON public.tasks;
+DROP POLICY IF EXISTS "Personal todos readable by owner" ON public.personal_todos;
+DROP POLICY IF EXISTS "Personal todos insertable by owner" ON public.personal_todos;
+DROP POLICY IF EXISTS "Personal todos updateable by owner" ON public.personal_todos;
+DROP POLICY IF EXISTS "Personal todos deletable by owner" ON public.personal_todos;
 DROP POLICY IF EXISTS "Task comments readable" ON public.task_comments;
 DROP POLICY IF EXISTS "Task comments insertable" ON public.task_comments;
 DROP POLICY IF EXISTS "Chat messages accessible by participants" ON public.chat_messages;
@@ -322,6 +345,15 @@ CREATE POLICY "Tasks insertable by project members" ON public.tasks
 
 CREATE POLICY "Tasks updatable by project members" ON public.tasks
     FOR UPDATE TO authenticated USING (public.is_project_member(project_id)) WITH CHECK (public.is_project_member(project_id));
+
+CREATE POLICY "Personal todos readable by owner" ON public.personal_todos
+    FOR SELECT TO authenticated USING (auth.uid() = user_id);
+CREATE POLICY "Personal todos insertable by owner" ON public.personal_todos
+    FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Personal todos updateable by owner" ON public.personal_todos
+    FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Personal todos deletable by owner" ON public.personal_todos
+    FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
 CREATE POLICY "Task comments readable by project members" ON public.task_comments
     FOR SELECT TO authenticated USING (
