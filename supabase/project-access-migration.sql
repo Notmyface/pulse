@@ -70,6 +70,9 @@ AS $$
         WHERE project_id = target_project_id
           AND user_id = auth.uid()
           AND is_manager = TRUE
+    ) OR EXISTS (
+        SELECT 1 FROM public.projects
+        WHERE id = target_project_id AND created_by = auth.uid()
     );
 $$;
 

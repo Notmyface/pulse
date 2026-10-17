@@ -201,8 +201,14 @@ export default function TaskDetailModal({
               <label className="text-slate-400 flex items-center gap-1 text-[11px]">
                 <Calendar size={13} className="text-emerald-400" /> Teslim
               </label>
-              {isEditing ? (
-                <input type="datetime-local" value={editDueDate} onChange={event => setEditDueDate(event.target.value)} className="w-full bg-slate-800 border border-indigo-500 rounded-lg px-2 py-1.5 text-slate-200 text-xs scheme-dark focus:outline-none" />
+              {isEditing || canManageTask ? (
+                <input
+                  type="datetime-local"
+                  value={editDueDate}
+                  onChange={event => setEditDueDate(event.target.value)}
+                  onBlur={!isEditing ? handleSaveTask : undefined}
+                  className="w-full bg-slate-800 border border-indigo-500 rounded-lg px-2 py-1.5 text-slate-200 text-xs scheme-dark focus:outline-none"
+                />
               ) : (
                 <div className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-300 text-xs">
                   {task.due_date ? new Date(task.due_date).toLocaleDateString("tr-TR", { day: "numeric", month: "short" }) : "Belirtilmedi"}
