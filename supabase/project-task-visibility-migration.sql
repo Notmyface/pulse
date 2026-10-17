@@ -1,6 +1,12 @@
 -- Pulse proje merkezli görev görünürlüğü migration'i
 -- Proje yöneticileri tüm proje görevlerini, üyeler yalnızca kendi görevlerini görür.
 
+INSERT INTO public.project_members (project_id, user_id, is_manager)
+SELECT id, created_by, TRUE
+FROM public.projects
+WHERE created_by IS NOT NULL
+ON CONFLICT (project_id, user_id) DO UPDATE SET is_manager = TRUE;
+
 DROP POLICY IF EXISTS "Project members readable by members" ON public.project_members;
 DROP POLICY IF EXISTS "Tasks readable by project members" ON public.tasks;
 DROP POLICY IF EXISTS "Tasks insertable by project members" ON public.tasks;

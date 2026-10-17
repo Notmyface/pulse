@@ -67,7 +67,7 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
   const [calendarMonth, setCalendarMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
   const [selectedDate, setSelectedDate] = useState(dateKey(today));
   const [viewMode, setViewMode] = useState<"calendar" | "list">("list");
-  const [filter, setFilter] = useState<"all" | "open" | "done">("open");
+  const [filter, setFilter] = useState<"all" | "open" | "done">("all");
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
   const [priority, setPriority] = useState<TaskPriority>("normal");

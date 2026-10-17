@@ -73,8 +73,8 @@ export default function MobileDashboard() {
   const [taskFilter, setTaskFilter] = useState<"all" | "assigned_to_me" | "urgent" | "archived">("all");
   
   // Canlı Veritabanı State'leri
-  const [projects, setProjects] = useState<Array<{ id: string; name: string; color: string; is_manager: boolean }>>([
-    { id: "default-proj", name: "Genel Çalışma Alanı", color: "#6366f1", is_manager: true }
+  const [projects, setProjects] = useState<Array<{ id: string; name: string; color: string; is_manager: boolean; created_by?: string }>>([
+    { id: "default-proj", name: "Genel Çalışma Alanı", color: "#6366f1", is_manager: true, created_by: undefined }
   ]);
   const [activeProjectId, setActiveProjectId] = useState<string>("default-proj");
   const [isAddingProject, setIsAddingProject] = useState(false);
@@ -190,7 +190,7 @@ export default function MobileDashboard() {
       // 1. Projeleri Çek
       const { data: projData } = await supabase.from("projects").select("*");
       if (projData && projData.length > 0) {
-        const formatted = projData.map((p: any) => ({ id: p.id, name: p.name, color: p.color_code || "#6366f1", is_manager: false }));
+        const formatted = projData.map((p: any) => ({ id: p.id, name: p.name, color: p.color_code || "#6366f1", is_manager: p.created_by === userId, created_by: p.created_by }));
         setProjects(formatted);
         setActiveProjectId(formatted[0].id);
       } else {
@@ -202,7 +202,7 @@ export default function MobileDashboard() {
         }).select().single();
 
         if (newProj) {
-          setProjects([{ id: newProj.id, name: newProj.name, color: newProj.color_code, is_manager: true }]);
+          setProjects([{ id: newProj.id, name: newProj.name, color: newProj.color_code, is_manager: true, created_by: userId }]);
           setActiveProjectId(newProj.id);
         }
       }
@@ -284,7 +284,7 @@ export default function MobileDashboard() {
       ...project,
       is_manager: projectMemberships.some(member =>
         member.project_id === project.id && member.user_id === currentUser?.id && member.is_manager
-      )
+      ) || project.created_by === currentUser?.id
     })));
     const members = activeMemberships
       .map(member => {
@@ -440,7 +440,7 @@ export default function MobileDashboard() {
       }).select().single();
 
       if (data) {
-        const newProj = { id: data.id, name: data.name, color: data.color_code, is_manager: true };
+        const newProj = { id: data.id, name: data.name, color: data.color_code, is_manager: true, created_by: currentUser.id };
         setProjects(prev => [...prev, newProj]);
         setActiveProjectId(data.id);
         setNewProjectInput("");
@@ -652,7 +652,7 @@ export default function MobileDashboard() {
 
         if (createdProj) {
           targetProjectId = createdProj.id;
-          const p = { id: createdProj.id, name: createdProj.name, color: createdProj.color_code, is_manager: true };
+          const p = { id: createdProj.id, name: createdProj.name, color: createdProj.color_code, is_manager: true, created_by: currentUser.id };
           setProjects(prev => [...prev, p]);
           setActiveProjectId(createdProj.id);
         }
