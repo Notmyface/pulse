@@ -370,6 +370,9 @@ CREATE POLICY "Profiles readable by auth users" ON public.profiles
 CREATE POLICY "Users can update own profile" ON public.profiles
     FOR UPDATE TO authenticated USING (auth.uid() = id);
 
+CREATE POLICY "Users can insert own profile" ON public.profiles
+    FOR INSERT TO authenticated WITH CHECK (auth.uid() = id);
+
 -- Projeler: yalnızca üye olunan projeler okunabilir; herkes kendi projesini açabilir.
 CREATE POLICY "Projects readable by members" ON public.projects
     FOR SELECT TO authenticated USING (public.is_project_member(id));

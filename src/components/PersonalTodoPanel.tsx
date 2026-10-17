@@ -11,14 +11,21 @@ import {
   Circle,
   Clock3,
   Plus,
-  Trash2,
-  Undo2
+  Pencil,
+  Trash2
 } from "lucide-react";
 import type { PersonalTodo, TaskPriority } from "@/types/database";
 
 interface PersonalTodoPanelProps {
   todos: PersonalTodo[];
   onCreate: (todo: {
+    title: string;
+    note?: string;
+    priority: TaskPriority;
+    due_at?: string;
+    remind_at?: string;
+  }) => void;
+  onEdit: (todoId: string, changes: {
     title: string;
     note?: string;
     priority: TaskPriority;
@@ -62,7 +69,7 @@ function formatTodoDate(value?: string) {
   });
 }
 
-export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete, onPostpone }: PersonalTodoPanelProps) {
+export default function PersonalTodoPanel({ todos, onCreate, onEdit, onToggle, onDelete, onPostpone }: PersonalTodoPanelProps) {
   const today = new Date();
   const [calendarMonth, setCalendarMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
   const [selectedDate, setSelectedDate] = useState(dateKey(today));
@@ -74,6 +81,7 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
   const [dueAt, setDueAt] = useState("");
   const [remindAt, setRemindAt] = useState("");
   const [showDetails, setShowDetails] = useState(false);
+  const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
 
   const monthStart = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
   const firstDay = (monthStart.getDay() + 6) % 7;
@@ -96,13 +104,37 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!title.trim()) return;
-    onCreate({
+    const changes = {
       title: title.trim(),
       note: note.trim() || undefined,
       priority,
       due_at: toIso(dueAt),
       remind_at: toIso(remindAt)
-    });
+    };
+    if (editingTodoId) onEdit(editingTodoId, changes);
+    else onCreate(changes);
+    setTitle("");
+    setNote("");
+    setDueAt("");
+    setRemindAt("");
+    setPriority("normal");
+    setShowDetails(false);
+    setEditingTodoId(null);
+  };
+
+  const startEditing = (todo: PersonalTodo) => {
+    setEditingTodoId(todo.id);
+    setTitle(todo.title);
+    setNote(todo.note || "");
+    setPriority(todo.priority);
+    setDueAt(todo.due_at ? new Date(todo.due_at).toISOString().slice(0, 16) : "");
+    setRemindAt(todo.remind_at ? new Date(todo.remind_at).toISOString().slice(0, 16) : "");
+    setShowDetails(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEditing = () => {
+    setEditingTodoId(null);
     setTitle("");
     setNote("");
     setDueAt("");
@@ -146,8 +178,8 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
             placeholder="Bugün neyi tamamlamak istiyorsun?"
             className="min-w-0 flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
           />
-          <button type="submit" disabled={!title.trim()} className="p-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-lg" title="Todo ekle">
-            <Plus size={16} />
+          <button type="submit" disabled={!title.trim()} className="p-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-lg" title={editingTodoId ? "Todo'yu kaydet" : "Todo ekle"}>
+            {editingTodoId ? <Check size={16} /> : <Plus size={16} />}
           </button>
         </div>
         <div className="flex items-center gap-2">
@@ -185,6 +217,7 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
             </label>
           </div>
         )}
+        {editingTodoId && <button type="button" onClick={cancelEditing} className="text-[10px] text-slate-400 hover:text-white">Düzenlemeyi iptal et</button>}
       </form>
 
       <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-xl p-1">
@@ -228,19 +261,19 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
       {viewMode === "calendar" && selectedTodos.length > 0 && (
         <div className="space-y-2">
           <h3 className="text-[11px] font-semibold text-slate-400">{new Date(`${selectedDate}T12:00:00`).toLocaleDateString("tr-TR", { day: "numeric", month: "long" })}</h3>
-          {selectedTodos.map(todo => <TodoRow key={todo.id} todo={todo} onToggle={onToggle} onDelete={onDelete} onPostpone={onPostpone} />)}
+          {selectedTodos.map(todo => <TodoRow key={todo.id} todo={todo} onToggle={onToggle} onEdit={startEditing} onDelete={onDelete} onPostpone={onPostpone} />)}
         </div>
       )}
 
       {viewMode === "list" && <div className="space-y-2">
         <h3 className="text-[11px] font-semibold text-slate-400">Tüm kişisel işler ({visibleTodos.length})</h3>
-        {visibleTodos.length === 0 ? <div className="text-center py-8 text-xs text-slate-500 bg-slate-900/40 rounded-xl border border-dashed border-slate-800">Henüz kişisel todo yok.</div> : visibleTodos.map(todo => <TodoRow key={todo.id} todo={todo} onToggle={onToggle} onDelete={onDelete} onPostpone={onPostpone} />)}
+        {visibleTodos.length === 0 ? <div className="text-center py-8 text-xs text-slate-500 bg-slate-900/40 rounded-xl border border-dashed border-slate-800">Henüz kişisel todo yok.</div> : visibleTodos.map(todo => <TodoRow key={todo.id} todo={todo} onToggle={onToggle} onEdit={startEditing} onDelete={onDelete} onPostpone={onPostpone} />)}
       </div>}
     </div>
   );
 }
 
-function TodoRow({ todo, onToggle, onDelete, onPostpone }: { todo: PersonalTodo; onToggle: (todo: PersonalTodo) => void; onDelete: (todoId: string) => void; onPostpone: (todo: PersonalTodo, days: number) => void }) {
+function TodoRow({ todo, onToggle, onEdit, onDelete, onPostpone }: { todo: PersonalTodo; onToggle: (todo: PersonalTodo) => void; onEdit: (todo: PersonalTodo) => void; onDelete: (todoId: string) => void; onPostpone: (todo: PersonalTodo, days: number) => void }) {
   const overdue = todo.status === "todo" && todo.due_at && new Date(todo.due_at) < new Date();
   return (
     <div className={`bg-slate-900 border rounded-xl p-3 space-y-2 ${overdue ? "border-rose-500/50" : "border-slate-800"}`}>
@@ -257,7 +290,10 @@ function TodoRow({ todo, onToggle, onDelete, onPostpone }: { todo: PersonalTodo;
             {todo.remind_at && <span className="text-amber-400"><Bell size={11} className="inline mr-0.5" />{formatTodoDate(todo.remind_at)}</span>}
           </div>
         </div>
-        <button onClick={() => onDelete(todo.id)} className="p-1 text-slate-500 hover:text-rose-400" title="Todo'yu sil"><Trash2 size={14} /></button>
+        <div className="flex items-center gap-1">
+          <button onClick={() => onEdit(todo)} className="p-1 text-slate-500 hover:text-indigo-300" title="Todo'yu düzenle"><Pencil size={14} /></button>
+          <button onClick={() => onDelete(todo.id)} className="p-1 text-slate-500 hover:text-rose-400" title="Todo'yu sil"><Trash2 size={14} /></button>
+        </div>
       </div>
       {todo.status === "todo" && <div className="flex gap-1.5 pl-6">
         <button onClick={() => onPostpone(todo, 1)} className="px-2 py-1 rounded-md bg-slate-800 text-[10px] text-slate-400 hover:text-white">Yarına ertele</button>

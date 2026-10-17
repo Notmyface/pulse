@@ -73,10 +73,8 @@ export default function MobileDashboard() {
   const [taskFilter, setTaskFilter] = useState<"all" | "assigned_to_me" | "urgent" | "archived">("all");
   
   // Canlı Veritabanı State'leri
-  const [projects, setProjects] = useState<Array<{ id: string; name: string; color: string; is_manager: boolean; created_by?: string }>>([
-    { id: "default-proj", name: "Genel Çalışma Alanı", color: "#6366f1", is_manager: true, created_by: undefined }
-  ]);
-  const [activeProjectId, setActiveProjectId] = useState<string>("default-proj");
+  const [projects, setProjects] = useState<Array<{ id: string; name: string; color: string; is_manager: boolean; created_by?: string }>>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string>("");
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [newProjectInput, setNewProjectInput] = useState("");
 
@@ -139,7 +137,7 @@ export default function MobileDashboard() {
           full_name: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "Yönetici"
         };
         setCurrentUser(u);
-        loadSupabaseData(session.user.id, u.full_name);
+        loadSupabaseData(session.user.id, u.full_name, u.email);
       }
       setIsCheckingAuth(false);
     });
@@ -157,7 +155,7 @@ export default function MobileDashboard() {
           full_name: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "Yönetici"
         };
         setCurrentUser(u);
-        loadSupabaseData(session.user.id, u.full_name);
+        loadSupabaseData(session.user.id, u.full_name, u.email);
       } else {
         setCurrentUser(null);
         setTasks([]);
@@ -174,8 +172,14 @@ export default function MobileDashboard() {
   }, []);
 
   // 2. SUPABASE VERİLERİNİ ÇEKME
-  const loadSupabaseData = async (userId: string, userName?: string) => {
+  const loadSupabaseData = async (userId: string, userName?: string, userEmail?: string) => {
     try {
+      await supabase.from("profiles").upsert({
+        id: userId,
+        email: userEmail || "",
+        full_name: userName || "Kullanıcı"
+      }, { onConflict: "id" });
+
       const inviteToken = typeof window !== "undefined"
         ? new URLSearchParams(window.location.search).get("invite") || window.localStorage.getItem("pulse_pending_invite")
         : null;
@@ -195,7 +199,7 @@ export default function MobileDashboard() {
         setActiveProjectId(formatted[0].id);
       } else {
         // Veritabanında proje yoksa yeni bir tane oluşturmayı dene
-        const { data: newProj } = await supabase.from("projects").insert({
+        const { data: newProj, error: newProjectError } = await supabase.from("projects").insert({
           name: "Genel Çalışma Alanı",
           color_code: "#6366f1",
           created_by: userId
@@ -204,6 +208,8 @@ export default function MobileDashboard() {
         if (newProj) {
           setProjects([{ id: newProj.id, name: newProj.name, color: newProj.color_code, is_manager: true, created_by: userId }]);
           setActiveProjectId(newProj.id);
+        } else if (newProjectError) {
+          console.error("İlk proje oluşturulamadı:", newProjectError);
         }
       }
 
@@ -349,7 +355,7 @@ export default function MobileDashboard() {
             full_name: authFullName.trim() || authEmail.split("@")[0]
           };
           setCurrentUser(u);
-          loadSupabaseData(data.user!.id, u.full_name);
+          loadSupabaseData(data.user!.id, u.full_name, u.email);
         } else if (data.user) {
           setAuthSuccess("Hesabınız oluşturuldu! E-postanızı doğruladıktan sonra giriş yapabilirsiniz.");
         }
@@ -378,7 +384,7 @@ export default function MobileDashboard() {
             full_name: data.user.user_metadata?.full_name || authEmail.split("@")[0]
           };
           setCurrentUser(u);
-          loadSupabaseData(data.user.id, u.full_name);
+          loadSupabaseData(data.user.id, u.full_name, u.email);
         }
       }
     } catch (err: any) {
@@ -445,6 +451,9 @@ export default function MobileDashboard() {
         setActiveProjectId(data.id);
         setNewProjectInput("");
         setIsAddingProject(false);
+      } else if (error) {
+        console.error("Proje eklenemedi:", error);
+        alert(`Proje oluşturulamadı: ${error.message}`);
       }
     } catch (err) {
       console.error("Proje eklenemedi:", err);
@@ -608,6 +617,24 @@ export default function MobileDashboard() {
     setPersonalTodos(prev => [data as PersonalTodo, ...prev]);
   };
 
+  const handleEditPersonalTodo = async (todoId: string, changes: {
+    title: string;
+    note?: string;
+    priority: TaskPriority;
+    due_at?: string;
+    remind_at?: string;
+  }) => {
+    const { data, error } = await supabase.from("personal_todos")
+      .update(changes)
+      .eq("id", todoId)
+      .eq("user_id", currentUser?.id)
+      .select()
+      .single();
+    if (!error && data) {
+      setPersonalTodos(prev => prev.map(todo => todo.id === todoId ? data as PersonalTodo : todo));
+    }
+  };
+
   const handleTogglePersonalTodo = async (todo: PersonalTodo) => {
     const isDone = todo.status === "done";
     const update = {
@@ -659,8 +686,9 @@ export default function MobileDashboard() {
       }
 
       // Eğer hala geçerli bir proje ID'si yoksa ilk projeyi al
-      if (!targetProjectId || targetProjectId === "default-proj") {
-        targetProjectId = projects[0]?.id;
+      if (!targetProjectId) {
+        alert("Önce bir proje oluşturun veya mevcut bir proje seçin.");
+        return;
       }
 
       const { data, error } = await supabase.from("tasks").insert({
@@ -1124,6 +1152,7 @@ export default function MobileDashboard() {
           <PersonalTodoPanel
             todos={personalTodos}
             onCreate={handleCreatePersonalTodo}
+            onEdit={handleEditPersonalTodo}
             onToggle={handleTogglePersonalTodo}
             onDelete={handleDeletePersonalTodo}
             onPostpone={handlePostponePersonalTodo}
