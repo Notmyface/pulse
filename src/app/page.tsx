@@ -439,14 +439,20 @@ export default function MobileDashboard() {
     if (!newProjectInput.trim() || !currentUser) return;
 
     try {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) {
+        alert("Proje oluşturmak için tekrar giriş yapın.");
+        return;
+      }
+
       const { data, error } = await supabase.from("projects").insert({
         name: newProjectInput.trim(),
         color_code: "#6366f1",
-        created_by: currentUser.id
+        created_by: authUser.id
       }).select().single();
 
       if (data) {
-        const newProj = { id: data.id, name: data.name, color: data.color_code, is_manager: true, created_by: currentUser.id };
+        const newProj = { id: data.id, name: data.name, color: data.color_code, is_manager: true, created_by: authUser.id };
         setProjects(prev => [...prev, newProj]);
         setActiveProjectId(data.id);
         setNewProjectInput("");
