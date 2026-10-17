@@ -286,11 +286,18 @@ export default function MobileDashboard() {
 
   const sendPushNotification = async (userId: string, title: string, body: string) => {
     try {
-      await fetch("/api/notifications/send", {
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch("/api/notifications/send", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
+        },
         body: JSON.stringify({ userId, title, body, url: "/" })
       });
+      if (!response.ok) {
+        console.warn("Push gönderim endpoint'i hata döndürdü:", response.status, await response.text());
+      }
     } catch (error) {
       console.warn("Push bildirimi gönderilemedi:", error);
     }

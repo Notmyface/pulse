@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient as createServerClient } from "@/lib/supabase/server";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,7 +11,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Geçersiz abonelik bilgisi" }, { status: 400 });
     }
 
-    const supabase = await createClient();
+    const authorization = req.headers.get("authorization");
+    const supabase = authorization
+      ? createSupabaseClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+          { global: { headers: { Authorization: authorization } } }
+        )
+      : await createServerClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       return NextResponse.json({ error: "Oturum gerekli" }, { status: 401 });

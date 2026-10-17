@@ -2,11 +2,38 @@
 
 import { useEffect, useState } from "react";
 import { Bell, BellOff, Check, AlertCircle, Sparkles } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 export default function PushNotificationToggle() {
   const [permission, setPermission] = useState<NotificationPermission>("default");
   const [isSupported, setIsSupported] = useState(false);
   const [isSubscribing, setIsSubscribing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const supabase = createClient();
+
+  const syncPushSubscription = async (registration: ServiceWorkerRegistration) => {
+    const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+    if (!vapidPublicKey) throw new Error("VAPID public key yapılandırılmamış");
+
+    const existingSubscription = await registration.pushManager.getSubscription();
+    const subscription = existingSubscription || await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+    });
+    const { data: { session } } = await supabase.auth.getSession();
+    const response = await fetch("/api/notifications/subscribe", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
+      },
+      body: JSON.stringify({ subscription: subscription.toJSON() })
+    });
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Push aboneliği sunucuya kaydedilemedi (${response.status}): ${errorBody}`);
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== "undefined" && "Notification" in window && "serviceWorker" in navigator) {
@@ -14,7 +41,16 @@ export default function PushNotificationToggle() {
       setPermission(Notification.permission);
 
       // Service Worker'ı kaydet
-      navigator.serviceWorker.register("/sw.js").catch(err => {
+      navigator.serviceWorker.register("/sw.js").then(async registration => {
+        if (Notification.permission === "granted") {
+          try {
+            await syncPushSubscription(registration);
+          } catch (error) {
+            console.warn("Push aboneliği senkronize edilemedi:", error);
+            setErrorMessage(error instanceof Error ? error.message : "Push aboneliği kaydedilemedi.");
+          }
+        }
+      }).catch(err => {
         console.warn("Service worker kayıt hatası:", err);
       });
     }
@@ -28,31 +64,19 @@ export default function PushNotificationToggle() {
 
     try {
       setIsSubscribing(true);
+      setErrorMessage("");
       const result = await Notification.requestPermission();
       setPermission(result);
 
       if (result === "granted") {
         const registration = await navigator.serviceWorker.ready;
-        const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-        if (!vapidPublicKey) throw new Error("VAPID public key yapılandırılmamış");
-
-        const subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
-        });
-        const response = await fetch("/api/notifications/subscribe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subscription: subscription.toJSON() })
-        });
-        if (!response.ok) {
-          throw new Error("Push aboneliği sunucuya kaydedilemedi");
-        }
+        await syncPushSubscription(registration);
       } else if (result === "denied") {
         alert("Bildirim izni reddedildi. Tarayıcı ayarlarınızdan izin verebilirsiniz.");
       }
     } catch (err) {
       console.error("Bildirim izni istenirken hata:", err);
+      setErrorMessage(err instanceof Error ? err.message : "Bildirimler etkinleştirilemedi.");
     } finally {
       setIsSubscribing(false);
     }
@@ -94,6 +118,7 @@ export default function PushNotificationToggle() {
           </button>
         )}
       </div>
+      {errorMessage && <p className="text-[10px] text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded-lg px-2 py-1.5">{errorMessage}</p>}
     </div>
   );
 }

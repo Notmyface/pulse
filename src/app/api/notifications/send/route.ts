@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import webpush from "web-push";
-import { createClient } from "@/lib/supabase/server";
+import { createClient as createServerClient } from "@/lib/supabase/server";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(req: NextRequest) {
@@ -13,7 +14,14 @@ export async function POST(req: NextRequest) {
 
     // VAPID anahtarları varsa web-push kütüphanesi ile hedef kullanıcının cihazına push gönderilir
     // Supabase push_subscriptions tablosundan hedef kullanıcının endpoint ve auth anahtarları çekilir
-    const supabase = await createClient();
+    const authorization = req.headers.get("authorization");
+    const supabase = authorization
+      ? createSupabaseClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+          { global: { headers: { Authorization: authorization } } }
+        )
+      : await createServerClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: "Oturum gerekli" }, { status: 401 });
 
