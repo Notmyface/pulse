@@ -32,14 +32,21 @@ export default function PushNotificationToggle() {
       setPermission(result);
 
       if (result === "granted") {
-        // Service Worker hazır olduğunda bir test bildirimi göster
         const registration = await navigator.serviceWorker.ready;
-        if (registration) {
-          registration.showNotification("Pulse — Bildirimler Aktif! ⚡", {
-            body: "Artık görev tamamlandığında ve mesajda etiketlendiğinizde telefonunuza anında bildirim gelecek.",
-            icon: "/icon-192.png",
-            badge: "/icon-192.png",
-          });
+        const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+        if (!vapidPublicKey) throw new Error("VAPID public key yapılandırılmamış");
+
+        const subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+        });
+        const response = await fetch("/api/notifications/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subscription: subscription.toJSON() })
+        });
+        if (!response.ok) {
+          throw new Error("Push aboneliği sunucuya kaydedilemedi");
         }
       } else if (result === "denied") {
         alert("Bildirim izni reddedildi. Tarayıcı ayarlarınızdan izin verebilirsiniz.");
@@ -89,4 +96,10 @@ export default function PushNotificationToggle() {
       </div>
     </div>
   );
+}
+
+function urlBase64ToUint8Array(value: string) {
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(atob(base64), character => character.charCodeAt(0));
 }

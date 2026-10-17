@@ -284,6 +284,18 @@ export default function MobileDashboard() {
     }
   };
 
+  const sendPushNotification = async (userId: string, title: string, body: string) => {
+    try {
+      await fetch("/api/notifications/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, title, body, url: "/" })
+      });
+    } catch (error) {
+      console.warn("Push bildirimi gönderilemedi:", error);
+    }
+  };
+
   useEffect(() => {
     const activeMemberships = projectMemberships.filter(member => member.project_id === activeProjectId);
     setProjects(prev => prev.map(project => ({
@@ -552,6 +564,22 @@ export default function MobileDashboard() {
         completed_at: completedAt,
         completed_by: currentUser.id
       }).eq("id", taskId);
+      if (nextStatus === "done") {
+        const recipients = new Set([
+          target.created_by,
+          ...teamMembers
+            .filter(member => member.role === "Proje Yöneticisi")
+            .map(member => member.id)
+        ]);
+        recipients.delete(currentUser.id);
+        recipients.forEach(recipientId => {
+          void sendPushNotification(
+            recipientId,
+            "Görev tamamlandı",
+            `\"${target.title}\" görevi tamamlandı.`
+          );
+        });
+      }
     } catch (err) {
       console.error("Görev güncellenemedi:", err);
     }
@@ -710,6 +738,13 @@ export default function MobileDashboard() {
 
       if (data) {
         setTasks(prev => [data, ...prev]);
+        if (data.assigned_to && data.assigned_to !== currentUser.id) {
+          void sendPushNotification(
+            data.assigned_to,
+            "Yeni görev atandı",
+            `\"${data.title}\" görevi size atandı.`
+          );
+        }
       } else if (error) {
         console.error("Görev insert hatası:", error);
         alert(`Görev kaydedilemedi: ${error.message}`);
@@ -748,6 +783,13 @@ export default function MobileDashboard() {
           },
           attachment: pendingAttachment || undefined
         }]);
+
+        const recipientIds = isDm
+          ? (activeDmUser && activeDmUser !== currentUser.id ? [activeDmUser] : [])
+          : teamMembers.filter(member => member.id !== currentUser.id).map(member => member.id);
+        recipientIds.forEach(recipientId => {
+          void sendPushNotification(recipientId, "Yeni Pulse mesajı", `${currentUser.full_name} yeni bir mesaj gönderdi.`);
+        });
       }
 
       setNewMessageText("");
@@ -1675,8 +1717,11 @@ export default function MobileDashboard() {
           toggleTaskStatus(id);
           if (selectedTask) setSelectedTask(prev => prev ? { ...prev, status: s } : null);
         }}
-        onUpdateAssignee={(id, mId) => {
-          supabase.from("tasks").update({ assigned_to: mId }).eq("id", id);
+        onUpdateAssignee={async (id, mId, memberName) => {
+          const { error } = await supabase.from("tasks").update({ assigned_to: mId }).eq("id", id);
+          if (!error && mId && mId !== currentUser.id) {
+            void sendPushNotification(mId, "Görev size atandı", `${memberName || "Yeni bir görev"} için bir görev atandı.`);
+          }
         }}
         onUpdatePriority={(id, p) => {
           supabase.from("tasks").update({ priority: p }).eq("id", id);
