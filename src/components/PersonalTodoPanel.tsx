@@ -48,12 +48,6 @@ function dateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function startOfDay(date: Date) {
-  const result = new Date(date);
-  result.setHours(0, 0, 0, 0);
-  return result;
-}
-
 function toIso(value: string) {
   return value ? new Date(value).toISOString() : undefined;
 }
@@ -72,7 +66,7 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
   const today = new Date();
   const [calendarMonth, setCalendarMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
   const [selectedDate, setSelectedDate] = useState(dateKey(today));
-  const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
+  const [viewMode, setViewMode] = useState<"calendar" | "list">("list");
   const [filter, setFilter] = useState<"all" | "open" | "done">("open");
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
@@ -128,6 +122,12 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
     setShowDetails(true);
   };
 
+  const setQuickDueDate = (daysFromToday: number) => {
+    const date = new Date();
+    date.setDate(date.getDate() + daysFromToday);
+    setDueAt(`${dateKey(date)}T09:00`);
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -151,12 +151,14 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
           </button>
         </div>
         <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setQuickDueDate(0)} className="px-2 py-1.5 rounded-lg bg-slate-800 text-[10px] text-slate-300 hover:text-white">Bugün</button>
+          <button type="button" onClick={() => setQuickDueDate(1)} className="px-2 py-1.5 rounded-lg bg-slate-800 text-[10px] text-slate-300 hover:text-white">Yarın</button>
           <input
-            type="datetime-local"
-            value={dueAt}
-            onChange={event => setDueAt(event.target.value)}
+            type="date"
+            value={dueAt ? dueAt.slice(0, 10) : ""}
+            onChange={event => setDueAt(event.target.value ? `${event.target.value}T09:00` : "")}
             className="min-w-0 flex-1 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 scheme-dark"
-            aria-label="Todo teslim tarihi"
+            aria-label="Todo günü"
           />
           <select value={priority} onChange={event => setPriority(event.target.value as TaskPriority)} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:outline-none" aria-label="Todo önceliği">
             {Object.entries(priorityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -173,6 +175,10 @@ export default function PersonalTodoPanel({ todos, onCreate, onToggle, onDelete,
         {showDetails && (
           <div className="space-y-2 pt-1">
             <textarea value={note} onChange={event => setNote(event.target.value)} rows={2} placeholder="Kısa not..." className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 resize-none" />
+            <label className="flex items-center gap-2 text-[10px] text-slate-400">
+              <Clock3 size={13} className="text-indigo-400" /> Tarih ve saat
+              <input type="datetime-local" value={dueAt} onChange={event => setDueAt(event.target.value)} className="ml-auto bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-[11px] text-slate-200 scheme-dark" />
+            </label>
             <label className="flex items-center gap-2 text-[10px] text-slate-400">
               <Bell size={13} className="text-amber-400" /> Hatırlatıcı
               <input type="datetime-local" value={remindAt} onChange={event => setRemindAt(event.target.value)} className="ml-auto bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-[11px] text-slate-200 scheme-dark" />

@@ -70,7 +70,7 @@ export default function MobileDashboard() {
   // Uygulama Navigasyon State'leri
   const [activeTab, setActiveTab] = useState<"personal" | "tasks" | "chat" | "notifications" | "team">("tasks");
   const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
-  const [taskFilter, setTaskFilter] = useState<"all" | "assigned_to_me" | "urgent">("all");
+  const [taskFilter, setTaskFilter] = useState<"all" | "assigned_to_me" | "urgent" | "archived">("all");
   
   // Canlı Veritabanı State'leri
   const [projects, setProjects] = useState<Array<{ id: string; name: string; color: string; is_manager: boolean }>>([
@@ -567,6 +567,28 @@ export default function MobileDashboard() {
     }));
   };
 
+  const handleArchiveTask = async (taskId: string, archived: boolean) => {
+    if (!currentUser || !activeProject?.is_manager) return;
+    const update = {
+      archived_at: archived ? new Date().toISOString() : null,
+      archived_by: archived ? currentUser.id : null
+    };
+    const { error } = await supabase.from("tasks").update(update).eq("id", taskId);
+    if (!error) {
+      setTasks(prev => prev.map(task => task.id === taskId ? { ...task, ...update } as Task : task));
+      setSelectedTask(prev => prev?.id === taskId ? { ...prev, ...update } as Task : prev);
+    }
+  };
+
+  const handleEditTask = async (taskId: string, changes: { title: string; description?: string; due_date?: string }) => {
+    if (!currentUser || !activeProject?.is_manager) return;
+    const { error } = await supabase.from("tasks").update(changes).eq("id", taskId);
+    if (!error) {
+      setTasks(prev => prev.map(task => task.id === taskId ? { ...task, ...changes } : task));
+      setSelectedTask(prev => prev?.id === taskId ? { ...prev, ...changes } : prev);
+    }
+  };
+
   const handleCreatePersonalTodo = async (todo: {
     title: string;
     note?: string;
@@ -726,8 +748,11 @@ export default function MobileDashboard() {
     }
   };
 
+  const activeProject = projects.find(p => p.id === activeProjectId);
   const filteredTasks = tasks.filter(t => {
     if (t.project_id && activeProjectId && t.project_id !== activeProjectId) return false;
+    if (taskFilter === "archived") return Boolean(t.archived_at) && Boolean(activeProject?.is_manager);
+    if (t.archived_at) return false;
     if (taskFilter === "urgent") return t.priority === "urgent";
     if (taskFilter === "assigned_to_me") return currentUser ? t.assigned_to === currentUser.id : true;
     return true;
@@ -745,7 +770,6 @@ export default function MobileDashboard() {
   });
 
   const unreadCount = notifications.filter(n => !n.is_read).length;
-  const activeProject = projects.find(p => p.id === activeProjectId);
   const activeDmMember = teamMembers.find(m => m.id === activeDmUser);
 
   // YÜKLENİYOR
@@ -1129,6 +1153,14 @@ export default function MobileDashboard() {
                 >
                   Bana Atanan
                 </button>
+                {activeProject?.is_manager && (
+                  <button
+                    onClick={() => setTaskFilter("archived")}
+                    className={`px-3 py-1 rounded-full font-medium transition ${taskFilter === "archived" ? "bg-amber-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
+                  >
+                    Arşiv
+                  </button>
+                )}
               </div>
 
               <div className="flex items-center gap-1.5 shrink-0">
@@ -1140,13 +1172,15 @@ export default function MobileDashboard() {
                   {viewMode === "list" ? <Kanban size={16} /> : <ListFilter size={16} />}
                 </button>
 
-                <button 
-                  onClick={() => setIsCreateModalOpen(true)}
-                  className="p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-md shadow-indigo-600/30 transition"
-                  title="Yeni Görev Ata"
-                >
-                  <Plus size={16} />
-                </button>
+                {activeProject?.is_manager && (
+                  <button
+                    onClick={() => setIsCreateModalOpen(true)}
+                    className="p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-md shadow-indigo-600/30 transition"
+                    title="Yeni Görev Ata"
+                  >
+                    <Plus size={16} />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1208,7 +1242,11 @@ export default function MobileDashboard() {
                             )}
 
                             <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-400">
-                              {task.priority === "urgent" && (
+                              {task.archived_at ? (
+                                <span className="text-amber-400 font-semibold">Arşivlendi</span>
+                              ) : task.status === "done" ? (
+                                <span className="text-emerald-400 font-semibold">Tamamlandı</span>
+                              ) : task.priority === "urgent" && (
                                 <span className="text-rose-400 font-semibold flex items-center gap-1">
                                   <AlertCircle size={12} /> Acil
                                 </span>
@@ -1593,6 +1631,8 @@ export default function MobileDashboard() {
       <TaskDetailModal 
         task={selectedTask}
         teamMembers={teamMembers}
+        canManageTask={Boolean(activeProject?.is_manager)}
+        onEditTask={handleEditTask}
         comments={selectedTask ? taskComments[selectedTask.id] || [] : []}
         onAddComment={handleAddTaskComment}
         onClose={() => setSelectedTask(null)}
@@ -1606,10 +1646,7 @@ export default function MobileDashboard() {
         onUpdatePriority={(id, p) => {
           supabase.from("tasks").update({ priority: p }).eq("id", id);
         }}
-        onDeleteTask={(id) => {
-          setTasks(prev => prev.filter(t => t.id !== id));
-          supabase.from("tasks").delete().eq("id", id);
-        }}
+        onArchiveTask={handleArchiveTask}
       />
 
       <CreateTaskModal 

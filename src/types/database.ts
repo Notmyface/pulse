@@ -35,6 +35,8 @@ export interface Task {
   due_date?: string;
   completed_at?: string;
   completed_by?: string;
+  archived_at?: string;
+  archived_by?: string;
   created_at: string;
   // Joins
   assigned_profile?: Profile;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { 
   X, 
   CheckCircle2, 
@@ -12,7 +12,8 @@ import {
   MessageSquare, 
   Paperclip, 
   Calendar,
-  Trash2
+  Trash2,
+  Pencil
 } from "lucide-react";
 import type { Task, TaskComment } from "@/types/database";
 import { formatTimeAgo } from "@/lib/utils";
@@ -24,7 +25,9 @@ interface TaskDetailModalProps {
   onUpdateStatus: (taskId: string, newStatus: Task["status"]) => void;
   onUpdateAssignee: (taskId: string, memberId: string, memberName: string) => void;
   onUpdatePriority: (taskId: string, priority: Task["priority"]) => void;
-  onDeleteTask: (taskId: string) => void;
+  onEditTask: (taskId: string, changes: { title: string; description?: string; due_date?: string }) => void;
+  onArchiveTask: (taskId: string, archived: boolean) => void;
+  canManageTask: boolean;
   comments: TaskComment[];
   onAddComment: (taskId: string, content: string) => void;
 }
@@ -36,11 +39,25 @@ export default function TaskDetailModal({
   onUpdateStatus,
   onUpdateAssignee,
   onUpdatePriority,
-  onDeleteTask,
+  onEditTask,
+  onArchiveTask,
+  canManageTask,
   comments,
   onAddComment
 }: TaskDetailModalProps) {
   const [commentText, setCommentText] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editDueDate, setEditDueDate] = useState("");
+
+  useEffect(() => {
+    if (!task) return;
+    setEditTitle(task.title);
+    setEditDescription(task.description || "");
+    setEditDueDate(task.due_date ? new Date(task.due_date).toISOString().slice(0, 16) : "");
+    setIsEditing(false);
+  }, [task?.id]);
 
   const handleAddComment = () => {
     if (!task || !commentText.trim()) return;
@@ -52,6 +69,16 @@ export default function TaskDetailModal({
 
   const isDone = task.status === "done";
 
+  const handleSaveTask = () => {
+    if (!editTitle.trim()) return;
+    onEditTask(task.id, {
+      title: editTitle.trim(),
+      description: editDescription.trim() || undefined,
+      due_date: editDueDate ? new Date(editDueDate).toISOString() : undefined
+    });
+    setIsEditing(false);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
       
@@ -61,9 +88,12 @@ export default function TaskDetailModal({
         {/* Üst Kapatma & Çekme Çubuğu */}
         <div className="pt-3 pb-2 px-5 flex items-center justify-between border-b border-slate-800/80">
           <div className="w-12 h-1.5 bg-slate-700 rounded-full mx-auto sm:hidden absolute left-1/2 -translate-x-1/2 top-2" />
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-            Görev Detayı & Tartışma
-          </span>
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Görev Detayı & Tartışma</span>
+          {canManageTask && !isEditing && (
+            <button onClick={() => setIsEditing(true)} className="ml-auto mr-2 p-1 text-slate-400 hover:text-indigo-300" title="Görevi düzenle">
+              <Pencil size={15} />
+            </button>
+          )}
           <button 
             onClick={onClose}
             className="p-1 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition"
@@ -87,14 +117,21 @@ export default function TaskDetailModal({
                 <Circle size={24} className="hover:text-indigo-400" />
               )}
             </button>
-            <div className="flex-1">
-              <h2 className={`text-base font-semibold leading-snug ${isDone ? "line-through text-slate-400" : "text-white"}`}>
-                {task.title}
-              </h2>
-              {task.description && (
-                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                  {task.description}
-                </p>
+            <div className="flex-1 space-y-2">
+              {isEditing ? (
+                <>
+                  <input value={editTitle} onChange={event => setEditTitle(event.target.value)} className="w-full bg-slate-800 border border-indigo-500 rounded-lg px-2.5 py-2 text-sm text-white focus:outline-none" />
+                  <textarea value={editDescription} onChange={event => setEditDescription(event.target.value)} rows={3} placeholder="Açıklama" className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 resize-none" />
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => setIsEditing(false)} className="px-2.5 py-1.5 text-[11px] text-slate-400">İptal</button>
+                    <button onClick={handleSaveTask} className="px-2.5 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px]">Kaydet</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h2 className={`text-base font-semibold leading-snug ${isDone ? "line-through text-slate-400" : "text-white"}`}>{task.title}</h2>
+                  {task.description && <p className="text-xs text-slate-400 mt-1 leading-relaxed">{task.description}</p>}
+                </>
               )}
             </div>
           </div>
@@ -113,6 +150,7 @@ export default function TaskDetailModal({
                   const selected = teamMembers.find(m => m.id === e.target.value);
                   onUpdateAssignee(task.id, e.target.value, selected?.name || "");
                 }}
+                disabled={!canManageTask}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500"
               >
                 <option value="">Atanmadı</option>
@@ -132,6 +170,7 @@ export default function TaskDetailModal({
               <select 
                 value={task.priority}
                 onChange={(e) => onUpdatePriority(task.id, e.target.value as Task["priority"])}
+                disabled={!canManageTask}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500"
               >
                 <option value="urgent">🔴 Acil</option>
@@ -162,9 +201,13 @@ export default function TaskDetailModal({
               <label className="text-slate-400 flex items-center gap-1 text-[11px]">
                 <Calendar size={13} className="text-emerald-400" /> Teslim
               </label>
-              <div className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-300 text-xs">
-                {task.due_date ? new Date(task.due_date).toLocaleDateString("tr-TR", { day: "numeric", month: "short" }) : "Belirtilmedi"}
-              </div>
+              {isEditing ? (
+                <input type="datetime-local" value={editDueDate} onChange={event => setEditDueDate(event.target.value)} className="w-full bg-slate-800 border border-indigo-500 rounded-lg px-2 py-1.5 text-slate-200 text-xs scheme-dark focus:outline-none" />
+              ) : (
+                <div className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-300 text-xs">
+                  {task.due_date ? new Date(task.due_date).toLocaleDateString("tr-TR", { day: "numeric", month: "short" }) : "Belirtilmedi"}
+                </div>
+              )}
             </div>
 
           </div>
@@ -207,20 +250,16 @@ export default function TaskDetailModal({
             </div>
           </div>
 
-          {/* Görevi Sil Butonu */}
-          <div className="pt-2 flex justify-end">
-            <button 
-              onClick={() => {
-                if (confirm("Bu görevi silmek istediğinize emin misiniz?")) {
-                  onDeleteTask(task.id);
-                  onClose();
-                }
-              }}
-              className="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1 py-1 px-2 rounded-lg hover:bg-rose-950/30 transition"
-            >
-              <Trash2 size={13} /> Görevi Sil
-            </button>
-          </div>
+          {canManageTask && (
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => onArchiveTask(task.id, !task.archived_at)}
+                className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1 py-1 px-2 rounded-lg hover:bg-amber-950/30 transition"
+              >
+                <Trash2 size={13} /> {task.archived_at ? "Arşivden Çıkar" : "Görevi Arşivle"}
+              </button>
+            </div>
+          )}
 
         </div>
 
