@@ -70,7 +70,8 @@ export default function MobileDashboard() {
 
   // Uygulama Navigasyon State'leri
   const [activeTab, setActiveTab] = useState<"personal" | "tasks" | "chat" | "notifications" | "team">("tasks");
-  const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
+  const [viewMode, setViewMode] = useState<"kanban" | "list">("kanban");
+  const [listProjectFilter, setListProjectFilter] = useState<string>("all");
   const [taskFilter, setTaskFilter] = useState<"all" | "assigned_to_me" | "urgent" | "archived">("all");
   
   // Canlı Veritabanı State'leri
@@ -602,6 +603,49 @@ export default function MobileDashboard() {
     }
   };
 
+  // Görev Durumunu Doğrudan Güncelle (Kanban / Modal için)
+  const handleUpdateTaskStatus = async (taskId: string, newStatus: Task["status"]) => {
+    const target = tasks.find(t => t.id === taskId);
+    if (!target || !currentUser) return;
+
+    const completedAt = newStatus === "done" ? new Date().toISOString() : undefined;
+
+    setTasks(prev =>
+      prev.map(task =>
+        task.id === taskId
+          ? { ...task, status: newStatus, completed_at: completedAt }
+          : task
+      )
+    );
+
+    try {
+      await supabase.from("tasks").update({
+        status: newStatus,
+        completed_at: completedAt,
+        completed_by: newStatus === "done" ? currentUser.id : null
+      }).eq("id", taskId);
+
+      if (newStatus === "done") {
+        const recipients = new Set([
+          target.created_by,
+          ...teamMembers
+            .filter(member => member.role === "Proje Yöneticisi")
+            .map(member => member.id)
+        ]);
+        recipients.delete(currentUser.id);
+        recipients.forEach(recipientId => {
+          void sendPushNotification(
+            recipientId,
+            "Görev tamamlandı",
+            `"${target.title}" görevi tamamlandı.`
+          );
+        });
+      }
+    } catch (err) {
+      console.error("Görev durumu güncellenemedi:", err);
+    }
+  };
+
   const handleAddTaskComment = async (taskId: string, content: string) => {
     if (!currentUser) return;
 
@@ -773,7 +817,13 @@ export default function MobileDashboard() {
 
   const activeProject = projects.find(p => p.id === activeProjectId);
   const filteredTasks = tasks.filter(t => {
-    if (t.project_id && activeProjectId && t.project_id !== activeProjectId) return false;
+    // Kanban modunda seçili projeye göre filtrele
+    if (viewMode === "kanban") {
+      if (t.project_id && activeProjectId && t.project_id !== activeProjectId) return false;
+    } else {
+      // Liste modunda: 'all' ise tüm projeler, değilse seçilen proje
+      if (listProjectFilter !== "all" && t.project_id !== listProjectFilter) return false;
+    }
     if (taskFilter === "archived") return Boolean(t.archived_at) && Boolean(activeProject?.is_manager);
     if (t.archived_at) return false;
     if (taskFilter === "urgent") return t.priority === "urgent";
@@ -1144,143 +1194,281 @@ export default function MobileDashboard() {
 
         {/* --- TAB: GÖREVLER (TASKS) --- */}
         {activeTab === "tasks" && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex gap-1.5 overflow-x-auto text-xs py-0.5">
-                <button 
-                  onClick={() => setTaskFilter("all")}
-                  className={`px-3 py-1 rounded-full font-medium transition ${taskFilter === "all" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
-                >
-                  Tümü ({filteredTasks.length})
-                </button>
-                <button 
-                  onClick={() => setTaskFilter("urgent")}
-                  className={`px-3 py-1 rounded-full font-medium transition ${taskFilter === "urgent" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
-                >
-                  Acil
-                </button>
-                <button 
-                  onClick={() => setTaskFilter("assigned_to_me")}
-                  className={`px-3 py-1 rounded-full font-medium transition ${taskFilter === "assigned_to_me" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
-                >
-                  Bana Atanan
-                </button>
-                {activeProject?.is_manager && (
-                  <button
-                    onClick={() => setTaskFilter("archived")}
-                    className={`px-3 py-1 rounded-full font-medium transition ${taskFilter === "archived" ? "bg-amber-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
-                  >
-                    Arşiv
-                  </button>
-                )}
+          <div className="space-y-3.5">
+            {/* 1. ÜST GÖRÜNÜM SEÇİCİ (KANBAN / LİSTE) */}
+            <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs shadow-sm">
+              <button
+                onClick={() => setViewMode("kanban")}
+                className={`flex-1 py-1.5 rounded-lg font-medium flex items-center justify-center gap-1.5 transition ${
+                  viewMode === "kanban" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <Kanban size={14} /> Kanban Board (Proje Bazlı)
+              </button>
+              <button
+                onClick={() => setViewMode("list")}
+                className={`flex-1 py-1.5 rounded-lg font-medium flex items-center justify-center gap-1.5 transition ${
+                  viewMode === "list" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <ListFilter size={14} /> Liste Görünümü (Tüm Görevler)
+              </button>
+            </div>
+
+            {/* 2. KANBAN / LİSTE İÇERİĞİ */}
+            {viewMode === "kanban" ? (
+              /* --- KANBAN BOARD GÖRÜNÜMÜ (PROJE BAZLI) --- */
+              <div className="space-y-3">
+                {/* Proje Seçici Sekmeleri */}
+                <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 scrollbar-none">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    {projects.map(proj => {
+                      const isActive = proj.id === activeProjectId;
+                      const projTaskCount = tasks.filter(t => t.project_id === proj.id && !t.archived_at).length;
+                      return (
+                        <button
+                          key={proj.id}
+                          onClick={() => setActiveProjectId(proj.id)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition shrink-0 ${
+                            isActive
+                              ? "bg-slate-800 border-indigo-500 text-white shadow-sm"
+                              : "bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: proj.color || "#6366f1" }} />
+                          <span className="truncate max-w-[120px]">{proj.name}</span>
+                          <span className="text-[10px] bg-slate-950 px-1.5 py-0.2 rounded-full text-slate-400 font-bold">
+                            {projTaskCount}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {activeProject?.is_manager && (
+                    <button
+                      onClick={() => setIsCreateModalOpen(true)}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-medium shadow-md shadow-indigo-600/30 transition shrink-0"
+                    >
+                      <Plus size={13} /> Görev Ekle
+                    </button>
+                  )}
+                </div>
+
+                {/* Filtre Butonları */}
+                <div className="flex items-center justify-between gap-2 pt-0.5">
+                  <div className="flex gap-1.5 overflow-x-auto text-xs py-0.5">
+                    <button 
+                      onClick={() => setTaskFilter("all")}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "all" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
+                    >
+                      Tümü ({filteredTasks.length})
+                    </button>
+                    <button 
+                      onClick={() => setTaskFilter("urgent")}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "urgent" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
+                    >
+                      Acil
+                    </button>
+                    <button 
+                      onClick={() => setTaskFilter("assigned_to_me")}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "assigned_to_me" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
+                    >
+                      Bana Atanan
+                    </button>
+                    {activeProject?.is_manager && (
+                      <button
+                        onClick={() => setTaskFilter("archived")}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "archived" ? "bg-amber-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
+                      >
+                        Arşiv
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Kanban Board Bileşeni */}
+                <KanbanBoard 
+                  tasks={filteredTasks}
+                  profiles={profiles as any}
+                  currentUserId={currentUser.id}
+                  onSelectTask={(task) => setSelectedTask(task)}
+                  onToggleStatus={toggleTaskStatus}
+                  onUpdateStatus={handleUpdateTaskStatus}
+                />
               </div>
+            ) : (
+              /* --- LİSTE GÖRÜNÜMÜ (TÜM GÖREVLER / PROJELER) --- */
+              <div className="space-y-3">
+                {/* Proje Filtresi (Tüm Projeler Seçeneği ile) */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs scrollbar-none">
+                  <button
+                    onClick={() => setListProjectFilter("all")}
+                    className={`px-3 py-1.5 rounded-xl font-medium text-xs border transition shrink-0 ${
+                      listProjectFilter === "all"
+                        ? "bg-indigo-600 text-white border-indigo-500 shadow-sm"
+                        : "bg-slate-900/60 border-slate-800 text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    🌐 Tüm Projeler ({tasks.filter(t => !t.archived_at).length})
+                  </button>
+                  {projects.map(proj => {
+                    const isSelected = listProjectFilter === proj.id;
+                    const count = tasks.filter(t => t.project_id === proj.id && !t.archived_at).length;
+                    return (
+                      <button
+                        key={proj.id}
+                        onClick={() => setListProjectFilter(proj.id)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-medium text-xs border transition shrink-0 ${
+                          isSelected
+                            ? "bg-slate-800 border-indigo-500 text-white shadow-sm"
+                            : "bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: proj.color || "#6366f1" }} />
+                        <span>{proj.name}</span>
+                        <span className="text-[10px] text-slate-400">({count})</span>
+                      </button>
+                    );
+                  })}
+                </div>
 
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button 
-                  onClick={() => setViewMode(prev => prev === "list" ? "kanban" : "list")}
-                  className="p-1.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white transition"
-                  title="Görünüm Değiştir"
-                >
-                  {viewMode === "list" ? <Kanban size={16} /> : <ListFilter size={16} />}
-                </button>
+                {/* Durum / Öncelik Filtresi ve Aksiyon */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex gap-1.5 overflow-x-auto text-xs py-0.5">
+                    <button 
+                      onClick={() => setTaskFilter("all")}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "all" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
+                    >
+                      Tümü ({filteredTasks.length})
+                    </button>
+                    <button 
+                      onClick={() => setTaskFilter("urgent")}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "urgent" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
+                    >
+                      Acil
+                    </button>
+                    <button 
+                      onClick={() => setTaskFilter("assigned_to_me")}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "assigned_to_me" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
+                    >
+                      Bana Atanan
+                    </button>
+                    <button
+                      onClick={() => setTaskFilter("archived")}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "archived" ? "bg-amber-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
+                    >
+                      Arşiv
+                    </button>
+                  </div>
 
-                {activeProject?.is_manager && (
                   <button
                     onClick={() => setIsCreateModalOpen(true)}
-                    className="p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-md shadow-indigo-600/30 transition"
-                    title="Yeni Görev Ata"
+                    className="p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-md shadow-indigo-600/30 transition shrink-0"
+                    title="Yeni Görev Ekle"
                   >
                     <Plus size={16} />
                   </button>
-                )}
-              </div>
-            </div>
+                </div>
 
-            {viewMode === "kanban" ? (
-              <KanbanBoard 
-                tasks={filteredTasks}
-                onSelectTask={(task) => setSelectedTask(task)}
-                onToggleStatus={toggleTaskStatus}
-              />
-            ) : (
-              <div className="space-y-2.5">
-                {filteredTasks.length === 0 ? (
-                  <div className="text-center py-12 text-slate-400 text-xs bg-slate-900/30 rounded-2xl border border-dashed border-slate-800 space-y-2">
-                    <p>Bu projede henüz görev bulunmuyor.</p>
-                    <button
-                      onClick={() => setIsCreateModalOpen(true)}
-                      className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-medium hover:bg-indigo-500 transition"
-                    >
-                      + İlk Görevi Ekle
-                    </button>
-                  </div>
-                ) : (
-                  filteredTasks.map(task => {
-                    const isDone = task.status === "done";
-                    return (
-                      <div 
-                        key={task.id}
-                        onClick={() => setSelectedTask(task)}
-                        className={`p-3.5 rounded-xl border cursor-pointer transition-all duration-150 ${
-                          isDone 
-                            ? "bg-slate-900/40 border-slate-800/60 opacity-60" 
-                            : "bg-slate-900 border-slate-800 hover:border-indigo-500/50 shadow-sm"
-                        }`}
+                {/* Görevler Listesi */}
+                <div className="space-y-2.5">
+                  {filteredTasks.length === 0 ? (
+                    <div className="text-center py-12 text-slate-400 text-xs bg-slate-900/30 rounded-2xl border border-dashed border-slate-800 space-y-2">
+                      <p>Bu filtrede henüz görev bulunmuyor.</p>
+                      <button
+                        onClick={() => setIsCreateModalOpen(true)}
+                        className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-medium hover:bg-indigo-500 transition"
                       >
-                        <div className="flex items-start gap-3">
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleTaskStatus(task.id);
-                            }}
-                            className="mt-0.5 text-slate-400 hover:text-indigo-400 transition"
-                          >
-                            {isDone ? (
-                              <CheckCircle2 size={20} className="text-emerald-500" />
-                            ) : (
-                              <Circle size={20} className="hover:text-indigo-400" />
-                            )}
-                          </button>
+                        + İlk Görevi Ekle
+                      </button>
+                    </div>
+                  ) : (
+                    filteredTasks.map(task => {
+                      const isDone = task.status === "done";
+                      const taskProj = projects.find(p => p.id === task.project_id);
+                      const assigneeProfile = profiles.find(p => p.id === task.assigned_to);
 
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-sm font-medium leading-snug ${isDone ? "line-through text-slate-400" : "text-slate-100"}`}>
-                              {task.title}
-                            </p>
-                            
-                            {task.description && (
-                              <p className="text-xs text-slate-400 mt-1 line-clamp-1">
-                                {task.description}
-                              </p>
-                            )}
+                      return (
+                        <div 
+                          key={task.id}
+                          onClick={() => setSelectedTask(task)}
+                          className={`p-3.5 rounded-xl border cursor-pointer transition-all duration-150 ${
+                            isDone 
+                              ? "bg-slate-900/40 border-slate-800/60 opacity-60" 
+                              : "bg-slate-900 border-slate-800 hover:border-indigo-500/50 shadow-sm"
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleTaskStatus(task.id);
+                              }}
+                              className="mt-0.5 text-slate-400 hover:text-indigo-400 transition"
+                            >
+                              {isDone ? (
+                                <CheckCircle2 size={20} className="text-emerald-500" />
+                              ) : (
+                                <Circle size={20} className="hover:text-indigo-400" />
+                              )}
+                            </button>
 
-                            <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-400">
-                              {task.archived_at ? (
-                                <span className="text-amber-400 font-semibold">Arşivlendi</span>
-                              ) : task.status === "done" ? (
-                                <span className="text-emerald-400 font-semibold">Tamamlandı</span>
-                              ) : task.priority === "urgent" && (
-                                <span className="text-rose-400 font-semibold flex items-center gap-1">
-                                  <AlertCircle size={12} /> Acil
-                                </span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className={`text-sm font-medium leading-snug ${isDone ? "line-through text-slate-400" : "text-slate-100"}`}>
+                                  {task.title}
+                                </p>
+                                {taskProj && (
+                                  <span 
+                                    className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-800 border flex items-center gap-1"
+                                    style={{ borderColor: `${taskProj.color || '#6366f1'}40`, color: taskProj.color || '#818cf8' }}
+                                  >
+                                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: taskProj.color || '#6366f1' }} />
+                                    {taskProj.name}
+                                  </span>
+                                )}
+                              </div>
+                              
+                              {task.description && (
+                                <p className="text-xs text-slate-400 mt-1 line-clamp-1">
+                                  {task.description}
+                                </p>
                               )}
-                              <span className="flex items-center gap-1 bg-slate-800 px-2 py-0.5 rounded-full text-slate-300">
-                                <UserCheck size={11} className="text-indigo-400" />
-                                {task.assigned_to === currentUser.id 
-                                  ? "Bana Atandı" 
-                                  : (teamMembers.find(m => m.id === task.assigned_to)?.name || "Atandı")}
-                              </span>
-                              {task.due_date && (
-                                <span className="text-emerald-400">
-                                  Teslim: {new Date(task.due_date).toLocaleDateString("tr-TR", { day: "numeric", month: "short" })}
+
+                              <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-400 flex-wrap">
+                                {task.archived_at ? (
+                                  <span className="text-amber-400 font-semibold">Arşivlendi</span>
+                                ) : task.status === "done" ? (
+                                  <span className="text-emerald-400 font-semibold">Tamamlandı</span>
+                                ) : task.status === "in_progress" ? (
+                                  <span className="text-amber-400 font-semibold">Devam Ediyor</span>
+                                ) : task.priority === "urgent" ? (
+                                  <span className="text-rose-400 font-semibold flex items-center gap-1">
+                                    <AlertCircle size={12} /> Acil
+                                  </span>
+                                ) : null}
+
+                                <span className="flex items-center gap-1 bg-slate-800 px-2 py-0.5 rounded-full text-slate-300">
+                                  <UserCheck size={11} className="text-indigo-400" />
+                                  {task.assigned_to === currentUser.id 
+                                    ? "Bana Atandı" 
+                                    : (assigneeProfile?.full_name || assigneeProfile?.email || "Atandı")}
                                 </span>
-                              )}
+
+                                {task.due_date && (
+                                  <span className="text-emerald-400">
+                                    Teslim: {new Date(task.due_date).toLocaleDateString("tr-TR", { day: "numeric", month: "short" })}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })
-                )}
+                      );
+                    })
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1493,7 +1681,7 @@ export default function MobileDashboard() {
         onAddComment={handleAddTaskComment}
         onClose={() => setSelectedTask(null)}
         onUpdateStatus={(id, s) => {
-          toggleTaskStatus(id);
+          handleUpdateTaskStatus(id, s);
           if (selectedTask) setSelectedTask(prev => prev ? { ...prev, status: s } : null);
         }}
         onUpdateAssignee={async (id, mId, memberName) => {
