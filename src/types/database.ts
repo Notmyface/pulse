@@ -66,14 +66,43 @@ export interface PersonalTodo {
   updated_at: string;
 }
 
+export type ChannelType = 'project' | 'custom';
+export type ChannelRole = 'owner' | 'admin' | 'member';
+
+export interface Channel {
+  id: string;
+  name: string;
+  description?: string;
+  type: ChannelType;
+  project_id?: string;
+  created_by: string;
+  created_at: string;
+  project?: Project;
+  member_count?: number;
+}
+
+export interface ChannelMember {
+  id: string;
+  channel_id: string;
+  user_id: string;
+  role: ChannelRole;
+  joined_at: string;
+  profile?: Profile;
+}
+
 export interface ChatMessage {
   id: string;
+  channel_id?: string;
   project_id?: string;
   sender_id: string;
   recipient_id?: string;
   content: string;
   mentions: string[];
   is_direct_message: boolean;
+  attachment_url?: string;
+  attachment_name?: string;
+  attachment_size?: number;
+  attachment_mime?: string;
   created_at: string;
   sender?: Profile;
 }

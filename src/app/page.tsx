@@ -32,7 +32,7 @@ import {
   ListTodo
 } from "lucide-react";
 import { formatTimeAgo } from "@/lib/utils";
-import type { PersonalTodo, Task, TaskComment, ChatMessage, NotificationItem, TaskPriority } from "@/types/database";
+import type { PersonalTodo, Task, TaskComment, ChatMessage, NotificationItem, TaskPriority, Channel, ChannelMember } from "@/types/database";
 import TaskDetailModal from "@/components/TaskDetailModal";
 import CreateTaskModal from "@/components/CreateTaskModal";
 import KanbanBoard from "@/components/KanbanBoard";
@@ -41,6 +41,7 @@ import FileUploadButton, { type UploadedFile } from "@/components/FileUploadButt
 import PushNotificationToggle from "@/components/PushNotificationToggle";
 import InstallPrompt from "@/components/InstallPrompt";
 import PersonalTodoPanel from "@/components/PersonalTodoPanel";
+import ChatSection from "@/components/chat/ChatSection";
 import { createClient } from "@/lib/supabase/client";
 
 export default function MobileDashboard() {
@@ -89,21 +90,16 @@ export default function MobileDashboard() {
     attachment?: UploadedFile;
   }
   const [messages, setMessages] = useState<ExtendedMessage[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [channelMembers, setChannelMembers] = useState<ChannelMember[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-
-  // Sohbet Modu
-  const [chatMode, setChatMode] = useState<"channel" | "dm">("channel");
-  const [activeDmUser, setActiveDmUser] = useState<string>("");
+  const [chatInitialDmUserId, setChatInitialDmUserId] = useState<string | null>(null);
 
   // Modallar
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
-  // Dosya ve Mention
-  const [pendingAttachment, setPendingAttachment] = useState<UploadedFile | null>(null);
-  const [isMentionOpen, setIsMentionOpen] = useState(false);
-  const [mentionFilterText, setMentionFilterText] = useState("");
-  const [newMessageText, setNewMessageText] = useState("");
+  // Proje Davet
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"member" | "manager">("member");
   const [inviteStatus, setInviteStatus] = useState("");
@@ -232,9 +228,15 @@ export default function MobileDashboard() {
       }, {});
       setTaskComments(commentsByTask);
 
-      // 3. Görevleri ve mesajları yalnızca RLS'nin izin verdiği kapsamda çek
+      // 3. Görevleri, kanalları ve mesajları yalnızca RLS'nin izin verdiği kapsamda çek
       const { data: taskData } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
       if (taskData) setTasks(taskData);
+
+      const { data: channelData } = await supabase.from("channels").select("*").order("created_at", { ascending: true });
+      if (channelData) setChannels(channelData as Channel[]);
+
+      const { data: memberData } = await supabase.from("channel_members").select("*");
+      if (memberData) setChannelMembers(memberData as ChannelMember[]);
 
       const { data: msgData } = await supabase.from("chat_messages").select("*").order("created_at", { ascending: true });
       if (msgData) setMessages(msgData);
@@ -264,6 +266,16 @@ export default function MobileDashboard() {
         .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, () => {
           supabase.from("tasks").select("*").order("created_at", { ascending: false }).then(({ data }) => {
             if (data) setTasks(data);
+          });
+        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "channels" }, () => {
+          supabase.from("channels").select("*").order("created_at", { ascending: true }).then(({ data }) => {
+            if (data) setChannels(data as Channel[]);
+          });
+        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "channel_members" }, () => {
+          supabase.from("channel_members").select("*").then(({ data }) => {
+            if (data) setChannelMembers(data as ChannelMember[]);
           });
         })
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages" }, (payload) => {
@@ -323,8 +335,6 @@ export default function MobileDashboard() {
       })
       .filter((member): member is { id: string; name: string; role: string } => member !== null);
     setTeamMembers(members);
-    const firstOtherMember = members.find(member => member.id !== currentUser?.id);
-    setActiveDmUser(firstOtherMember?.id || "");
   }, [activeProjectId, currentUser, profiles, projectMemberships]);
 
   // 3. GİRİŞ & KAYIT & ŞİFRE SIFIRLAMA İŞLEMİ
@@ -761,76 +771,6 @@ export default function MobileDashboard() {
     }
   };
 
-  // Mesaj Gönder
-  const handleSendMessage = async () => {
-    if ((!newMessageText.trim() && !pendingAttachment) || !currentUser) return;
-
-    const isDm = chatMode === "dm";
-    const mentionedMembers = teamMembers.filter(m => newMessageText.includes(`@${m.name}`));
-
-    try {
-      const { data } = await supabase.from("chat_messages").insert({
-        project_id: activeProjectId,
-        sender_id: currentUser.id,
-        recipient_id: isDm ? activeDmUser : null,
-        content: newMessageText,
-        mentions: mentionedMembers.map(m => m.id),
-        is_direct_message: isDm
-      }).select().single();
-
-      if (data) {
-        setMessages(prev => [...prev, {
-          ...data,
-          sender: {
-            id: currentUser.id,
-            email: currentUser.email,
-            full_name: currentUser.full_name,
-            role: "member",
-            created_at: ""
-          },
-          attachment: pendingAttachment || undefined
-        }]);
-
-        const recipientIds = isDm
-          ? (activeDmUser && activeDmUser !== currentUser.id ? [activeDmUser] : [])
-          : teamMembers.filter(member => member.id !== currentUser.id).map(member => member.id);
-        recipientIds.forEach(recipientId => {
-          void sendPushNotification(recipientId, "Yeni Pulse mesajı", `${currentUser.full_name} yeni bir mesaj gönderdi.`);
-        });
-      }
-
-      setNewMessageText("");
-      setPendingAttachment(null);
-      setIsMentionOpen(false);
-
-    } catch (err) {
-      console.error("Mesaj gönderilemedi:", err);
-    }
-  };
-
-  const handleSelectMention = (member: { id: string; name: string }) => {
-    const atIndex = newMessageText.lastIndexOf("@");
-    const prefix = atIndex >= 0 ? newMessageText.slice(0, atIndex) : newMessageText;
-    setNewMessageText(`${prefix}@${member.name} `);
-    setIsMentionOpen(false);
-  };
-
-  const handleMessageInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setNewMessageText(val);
-
-    const lastAt = val.lastIndexOf("@");
-    if (lastAt >= 0 && lastAt === val.length - 1) {
-      setIsMentionOpen(true);
-      setMentionFilterText("");
-    } else if (lastAt >= 0 && !val.slice(lastAt).includes(" ")) {
-      setIsMentionOpen(true);
-      setMentionFilterText(val.slice(lastAt + 1));
-    } else {
-      setIsMentionOpen(false);
-    }
-  };
-
   const activeProject = projects.find(p => p.id === activeProjectId);
   const filteredTasks = tasks.filter(t => {
     if (t.project_id && activeProjectId && t.project_id !== activeProjectId) return false;
@@ -841,19 +781,7 @@ export default function MobileDashboard() {
     return true;
   });
 
-  const activeChatMessages = messages.filter(m => {
-    if (chatMode === "channel") {
-      return m.project_id === activeProjectId && !m.is_direct_message;
-    } else {
-      return m.project_id === activeProjectId && m.is_direct_message && (
-        (m.sender_id === currentUser?.id && m.recipient_id === activeDmUser) ||
-        (m.sender_id === activeDmUser && m.recipient_id === currentUser?.id)
-      );
-    }
-  });
-
   const unreadCount = notifications.filter(n => !n.is_read).length;
-  const activeDmMember = teamMembers.find(m => m.id === activeDmUser);
 
   // YÜKLENİYOR
   if (isCheckingAuth) {
@@ -1358,177 +1286,22 @@ export default function MobileDashboard() {
           </div>
         )}
 
-        {/* --- TAB: SOHBET (CHAT) --- */}
-        {activeTab === "chat" && (
-          <div className="flex flex-col h-full space-y-3">
-            <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
-              <button 
-                onClick={() => setChatMode("channel")}
-                className={`flex-1 py-1.5 rounded-lg font-medium transition ${chatMode === "channel" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-white"}`}
-              >
-                # {activeProject?.name || "Genel Kanal"}
-              </button>
-              <button 
-                onClick={() => setChatMode("dm")}
-                className={`flex-1 py-1.5 rounded-lg font-medium transition ${chatMode === "dm" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-white"}`}
-              >
-                1-e-1 Özel DM
-              </button>
-            </div>
-
-            {chatMode === "dm" && (
-              <div className="flex items-center gap-2 overflow-x-auto py-1 px-0.5 text-xs">
-                {teamMembers.filter(m => m.id !== currentUser.id).map(member => (
-                  <button
-                    key={member.id}
-                    onClick={() => setActiveDmUser(member.id)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border shrink-0 transition ${
-                      activeDmUser === member.id 
-                        ? "bg-slate-800 border-indigo-500 text-white font-medium" 
-                        : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    <div className="w-4 h-4 rounded-full bg-indigo-600 text-[9px] flex items-center justify-center font-bold text-white">
-                      {member.name.charAt(0)}
-                    </div>
-                    <span>{member.name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div className="flex-1 space-y-3 pt-2">
-              {activeChatMessages.length === 0 ? (
-                <div className="text-center py-12 text-slate-500 text-xs">
-                  Henüz mesaj bulunmuyor. İlk mesajı siz yazın!
-                </div>
-              ) : (
-                activeChatMessages.map(msg => (
-                  <div key={msg.id} className="flex gap-2.5">
-                    <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-indigo-400 shrink-0">
-                      {msg.sender?.full_name?.charAt(0) || "U"}
-                    </div>
-                    <div className="flex-1 bg-slate-900 border border-slate-800 p-2.5 rounded-2xl rounded-tl-none space-y-1.5">
-                      <div className="flex justify-between items-baseline">
-                        <span className="text-xs font-semibold text-slate-200">
-                          {msg.sender_id === currentUser.id ? "Siz" : (msg.sender?.full_name || "Kullanıcı")}
-                        </span>
-                        <span className="text-[10px] text-slate-400">
-                          {formatTimeAgo(msg.created_at)}
-                        </span>
-                      </div>
-                      
-                      {msg.content && (
-                        <p className="text-xs text-slate-300 leading-relaxed">
-                          {msg.content.split(" ").map((word, i) => (
-                            <span key={`${msg.id}-w-${i}`}>
-                              {word.startsWith("@") ? (
-                                <span className="text-indigo-400 font-semibold bg-indigo-950/60 px-1 py-0.5 rounded mr-1">
-                                  {word}
-                                </span>
-                              ) : (
-                                word + " "
-                              )}
-                            </span>
-                          ))}
-                        </p>
-                      )}
-
-                      {msg.attachment && (
-                        <div className="mt-2 p-2 bg-slate-950/80 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-2 min-w-0">
-                            {msg.attachment.mime_type.startsWith("image/") ? (
-                              <ImageIcon size={16} className="text-pink-400 shrink-0" />
-                            ) : (
-                              <FileText size={16} className="text-indigo-400 shrink-0" />
-                            )}
-                            <div className="truncate">
-                              <p className="font-medium text-slate-200 truncate text-[11px]">
-                                {msg.attachment.file_name}
-                              </p>
-                              <span className="text-[10px] text-slate-400">
-                                {(msg.attachment.file_size / 1024).toFixed(0)} KB
-                              </span>
-                            </div>
-                          </div>
-
-                          <a 
-                            href={msg.attachment.file_url} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-[10px] text-indigo-400 hover:text-indigo-300 underline font-medium shrink-0 ml-2"
-                          >
-                            İndir / Görüntüle
-                          </a>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Mesaj Yazma */}
-            <div className="pt-2 sticky bottom-0 bg-slate-950 relative">
-              <MentionPopover 
-                isOpen={isMentionOpen}
-                filterText={mentionFilterText}
-                teamMembers={teamMembers}
-                onSelect={handleSelectMention}
-              />
-
-              {pendingAttachment && (
-                <div className="mb-2 p-2 bg-indigo-950/50 border border-indigo-500/30 rounded-xl flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2 truncate">
-                    <FileText size={14} className="text-indigo-400 shrink-0" />
-                    <span className="text-slate-200 truncate text-[11px] font-medium">
-                      {pendingAttachment.file_name}
-                    </span>
-                  </div>
-                  <button 
-                    onClick={() => setPendingAttachment(null)}
-                    className="p-1 hover:text-rose-400 text-slate-400 transition"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              )}
-
-              <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-2xl p-1.5 focus-within:border-indigo-500 shadow-lg">
-                <FileUploadButton 
-                  onFileUploaded={(file) => setPendingAttachment(file)}
-                />
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewMessageText(prev => prev + "@");
-                    setIsMentionOpen(true);
-                  }}
-                  className="p-2 text-slate-400 hover:text-indigo-400 transition"
-                  title="Kişi Etiketle"
-                >
-                  <AtSign size={17} />
-                </button>
-
-                <input 
-                  type="text" 
-                  value={newMessageText}
-                  onChange={handleMessageInputChange}
-                  onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-                  placeholder={chatMode === "channel" ? "@etiketle veya gruba yaz..." : `${activeDmMember?.name} kişisine özel yaz...`}
-                  className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none px-1"
-                />
-
-                <button 
-                  onClick={handleSendMessage}
-                  className="p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl transition shadow-md shadow-indigo-600/30"
-                >
-                  <Send size={15} />
-                </button>
-              </div>
-            </div>
-          </div>
+        {/* --- TAB: SOHBET (CHANNELS & DM) --- */}
+        {activeTab === "chat" && currentUser && (
+          <ChatSection
+            currentUser={currentUser}
+            projects={projects}
+            profiles={profiles as any}
+            channels={channels}
+            setChannels={setChannels}
+            channelMembers={channelMembers}
+            setChannelMembers={setChannelMembers}
+            messages={messages}
+            setMessages={setMessages as any}
+            activeProjectId={activeProjectId}
+            initialDmUserId={chatInitialDmUserId}
+            sendPushNotification={sendPushNotification}
+          />
         )}
 
         {/* --- TAB: BİLDİRİMLER (NOTIFICATIONS) --- */}
@@ -1648,8 +1421,7 @@ export default function MobileDashboard() {
                       )}
                       <button
                         onClick={() => {
-                          setActiveDmUser(member.id);
-                          setChatMode("dm");
+                          setChatInitialDmUserId(member.id);
                           setActiveTab("chat");
                         }}
                         className="text-[11px] px-2.5 py-1 rounded-lg bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600 hover:text-white transition"

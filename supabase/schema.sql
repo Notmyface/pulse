@@ -127,15 +127,40 @@ CREATE TABLE IF NOT EXISTS public.task_comments (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 7. MESAJLAŞMA (CHAT MESSAGES: PROJE ODASI VEYA 1-E-1 ÖZEL DM)
+-- 7. SOHBET KANALLARI (CHANNELS) & MESAJLAŞMA
+CREATE TABLE IF NOT EXISTS public.channels (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name TEXT NOT NULL,
+    description TEXT,
+    type TEXT NOT NULL CHECK (type IN ('project', 'custom')),
+    project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE,
+    created_by UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_project_channel UNIQUE (project_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.channel_members (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    channel_id UUID NOT NULL REFERENCES public.channels(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'member')),
+    joined_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_channel_user UNIQUE (channel_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS public.chat_messages (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE, -- NULL ise genel ekip odası
+    channel_id UUID REFERENCES public.channels(id) ON DELETE CASCADE,
+    project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE,
     sender_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-    recipient_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE, -- Dolu ise 1-e-1 Özel DM
+    recipient_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
-    mentions UUID[] DEFAULT '{}', -- Mesajda etiketlenen (@mention) kullanıcı ID'leri
+    mentions UUID[] DEFAULT '{}',
     is_direct_message BOOLEAN DEFAULT FALSE,
+    attachment_url TEXT,
+    attachment_name TEXT,
+    attachment_size BIGINT,
+    attachment_mime TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -285,6 +310,8 @@ ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.personal_todos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.task_comments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.channels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.channel_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attachments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
@@ -427,18 +454,156 @@ CREATE POLICY "Task comments insertable by project members" ON public.task_comme
 CREATE POLICY "Notifications only viewable by recipient" ON public.notifications
     FOR ALL TO authenticated USING (auth.uid() = user_id);
 
--- Mesajlar: kanal mesajı aynı projenin üyelerine, DM ise aynı projedeki iki kişiye açıktır.
+-- Kanal Üyeliği ve Yönetimi Kontrol Fonksiyonları
+CREATE OR REPLACE FUNCTION public.is_channel_member(target_channel_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.channels c
+        WHERE c.id = target_channel_id
+          AND c.type = 'project'
+          AND c.project_id IS NOT NULL
+          AND public.is_project_member(c.project_id)
+    ) OR EXISTS (
+        SELECT 1 FROM public.channel_members cm
+        WHERE cm.channel_id = target_channel_id
+          AND cm.user_id = auth.uid()
+    ) OR EXISTS (
+        SELECT 1 FROM public.channels c
+        WHERE c.id = target_channel_id
+          AND c.created_by = auth.uid()
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.can_manage_channel(target_channel_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.channels c
+        WHERE c.id = target_channel_id AND c.created_by = auth.uid()
+    ) OR EXISTS (
+        SELECT 1 FROM public.channel_members cm
+        WHERE cm.channel_id = target_channel_id
+          AND cm.user_id = auth.uid()
+          AND cm.role IN ('owner', 'admin')
+    ) OR EXISTS (
+        SELECT 1 FROM public.channels c
+        WHERE c.id = target_channel_id
+          AND c.type = 'project'
+          AND c.project_id IS NOT NULL
+          AND public.is_project_manager(c.project_id)
+    );
+$$;
+
+-- Otomatik Proje Kanalı Trigger'ı
+CREATE OR REPLACE FUNCTION public.handle_new_project_channel()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.channels (name, description, type, project_id, created_by)
+    VALUES (
+        NEW.name,
+        NEW.name || ' proje sohbet kanalı',
+        'project',
+        NEW.id,
+        COALESCE(NEW.created_by, auth.uid())
+    )
+    ON CONFLICT (project_id) DO UPDATE SET name = EXCLUDED.name;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_project_created_channel ON public.projects;
+CREATE TRIGGER on_project_created_channel
+AFTER INSERT OR UPDATE OF name ON public.projects
+FOR EACH ROW
+EXECUTE FUNCTION public.handle_new_project_channel();
+
+-- Özel Kanal Açıldığında Kurucuyu owner Olarak Ekleme Trigger'ı
+CREATE OR REPLACE FUNCTION public.handle_new_custom_channel_owner()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.type = 'custom' THEN
+        INSERT INTO public.channel_members (channel_id, user_id, role)
+        VALUES (NEW.id, NEW.created_by, 'owner')
+        ON CONFLICT (channel_id, user_id) DO NOTHING;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_custom_channel_created_owner ON public.channels;
+CREATE TRIGGER on_custom_channel_created_owner
+AFTER INSERT ON public.channels
+FOR EACH ROW
+EXECUTE FUNCTION public.handle_new_custom_channel_owner();
+
+-- Kanallar RLS
+DROP POLICY IF EXISTS "Channels readable by members" ON public.channels;
+CREATE POLICY "Channels readable by members" ON public.channels
+    FOR SELECT TO authenticated
+    USING (public.is_channel_member(id));
+
+DROP POLICY IF EXISTS "Channels insertable by auth users" ON public.channels;
+CREATE POLICY "Channels insertable by auth users" ON public.channels
+    FOR INSERT TO authenticated
+    WITH CHECK (auth.uid() = created_by);
+
+DROP POLICY IF EXISTS "Channels updateable by managers" ON public.channels;
+CREATE POLICY "Channels updateable by managers" ON public.channels
+    FOR UPDATE TO authenticated
+    USING (public.can_manage_channel(id))
+    WITH CHECK (public.can_manage_channel(id));
+
+DROP POLICY IF EXISTS "Channels deletable by creator" ON public.channels;
+CREATE POLICY "Channels deletable by creator" ON public.channels
+    FOR DELETE TO authenticated
+    USING (auth.uid() = created_by);
+
+-- Kanal Üyeleri RLS
+DROP POLICY IF EXISTS "Channel members readable" ON public.channel_members;
+CREATE POLICY "Channel members readable" ON public.channel_members
+    FOR SELECT TO authenticated
+    USING (public.is_channel_member(channel_id));
+
+DROP POLICY IF EXISTS "Channel members insertable by managers" ON public.channel_members;
+CREATE POLICY "Channel members insertable by managers" ON public.channel_members
+    FOR INSERT TO authenticated
+    WITH CHECK (public.can_manage_channel(channel_id) OR auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Channel members deletable" ON public.channel_members;
+CREATE POLICY "Channel members deletable" ON public.channel_members
+    FOR DELETE TO authenticated
+    USING (public.can_manage_channel(channel_id) OR auth.uid() = user_id);
+
+-- Mesajlar: Kanal mesajı kanal üyelerine, DM ise iki kişiye açıktır
+DROP POLICY IF EXISTS "Chat messages accessible by participants" ON public.chat_messages;
 CREATE POLICY "Chat messages accessible by participants" ON public.chat_messages
     FOR SELECT TO authenticated USING (
-        public.is_project_member(project_id) AND
-        (NOT is_direct_message OR recipient_id = auth.uid() OR sender_id = auth.uid())
+        (channel_id IS NOT NULL AND public.is_channel_member(channel_id))
+        OR
+        (is_direct_message = TRUE AND (sender_id = auth.uid() OR recipient_id = auth.uid()))
+        OR
+        (channel_id IS NULL AND project_id IS NOT NULL AND public.is_project_member(project_id) AND (NOT is_direct_message OR recipient_id = auth.uid() OR sender_id = auth.uid()))
     );
 
+DROP POLICY IF EXISTS "Chat messages insertable by sender" ON public.chat_messages;
 CREATE POLICY "Chat messages insertable by sender" ON public.chat_messages
     FOR INSERT TO authenticated WITH CHECK (
-        auth.uid() = sender_id AND
-        public.is_project_member(project_id) AND
-        (NOT is_direct_message OR public.is_project_member(project_id))
+        auth.uid() = sender_id AND (
+            (channel_id IS NOT NULL AND public.is_channel_member(channel_id))
+            OR
+            (is_direct_message = TRUE)
+            OR
+            (channel_id IS NULL AND project_id IS NOT NULL AND public.is_project_member(project_id))
+        )
     );
 
 -- Ekler: yalnızca mesajın veya görevin projesinin üyeleri erişebilir.
