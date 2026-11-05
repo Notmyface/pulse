@@ -29,10 +29,11 @@ import {
   FolderPlus,
   UserPlus,
   Share2,
-  ListTodo
+  ListTodo,
+  CalendarRange
 } from "lucide-react";
 import { formatTimeAgo } from "@/lib/utils";
-import type { PersonalTodo, Task, TaskComment, ChatMessage, NotificationItem, TaskPriority, Channel, ChannelMember } from "@/types/database";
+import type { PersonalTodo, Task, TaskComment, TaskDependency, ChatMessage, NotificationItem, TaskPriority } from "@/types/database";
 import TaskDetailModal from "@/components/TaskDetailModal";
 import CreateTaskModal from "@/components/CreateTaskModal";
 import KanbanBoard from "@/components/KanbanBoard";
@@ -41,7 +42,7 @@ import FileUploadButton, { type UploadedFile } from "@/components/FileUploadButt
 import PushNotificationToggle from "@/components/PushNotificationToggle";
 import InstallPrompt from "@/components/InstallPrompt";
 import PersonalTodoPanel from "@/components/PersonalTodoPanel";
-import ChatSection from "@/components/chat/ChatSection";
+import ProjectTimelinePanel from "@/components/ProjectTimelinePanel";
 import { createClient } from "@/lib/supabase/client";
 
 export default function MobileDashboard() {
@@ -70,8 +71,7 @@ export default function MobileDashboard() {
 
   // Uygulama Navigasyon State'leri
   const [activeTab, setActiveTab] = useState<"personal" | "tasks" | "chat" | "notifications" | "team">("tasks");
-  const [viewMode, setViewMode] = useState<"kanban" | "list">("kanban");
-  const [listProjectFilter, setListProjectFilter] = useState<string>("all");
+  const [viewMode, setViewMode] = useState<"list" | "kanban" | "timeline">("list");
   const [taskFilter, setTaskFilter] = useState<"all" | "assigned_to_me" | "urgent" | "archived">("all");
   
   // Canlı Veritabanı State'leri
@@ -84,6 +84,7 @@ export default function MobileDashboard() {
   const [projectMemberships, setProjectMemberships] = useState<Array<{ project_id: string; user_id: string; is_manager: boolean }>>([]);
   const [profiles, setProfiles] = useState<Array<{ id: string; email: string; full_name: string; role: string }>>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskDependencies, setTaskDependencies] = useState<TaskDependency[]>([]);
   const [taskComments, setTaskComments] = useState<Record<string, TaskComment[]>>({});
   const [personalTodos, setPersonalTodos] = useState<PersonalTodo[]>([]);
 
@@ -91,16 +92,21 @@ export default function MobileDashboard() {
     attachment?: UploadedFile;
   }
   const [messages, setMessages] = useState<ExtendedMessage[]>([]);
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [channelMembers, setChannelMembers] = useState<ChannelMember[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [chatInitialDmUserId, setChatInitialDmUserId] = useState<string | null>(null);
+
+  // Sohbet Modu
+  const [chatMode, setChatMode] = useState<"channel" | "dm">("channel");
+  const [activeDmUser, setActiveDmUser] = useState<string>("");
 
   // Modallar
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
-  // Proje Davet
+  // Dosya ve Mention
+  const [pendingAttachment, setPendingAttachment] = useState<UploadedFile | null>(null);
+  const [isMentionOpen, setIsMentionOpen] = useState(false);
+  const [mentionFilterText, setMentionFilterText] = useState("");
+  const [newMessageText, setNewMessageText] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"member" | "manager">("member");
   const [inviteStatus, setInviteStatus] = useState("");
@@ -229,15 +235,12 @@ export default function MobileDashboard() {
       }, {});
       setTaskComments(commentsByTask);
 
-      // 3. Görevleri, kanalları ve mesajları yalnızca RLS'nin izin verdiği kapsamda çek
+      // 3. Görevleri ve mesajları yalnızca RLS'nin izin verdiği kapsamda çek
       const { data: taskData } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
       if (taskData) setTasks(taskData);
 
-      const { data: channelData } = await supabase.from("channels").select("*").order("created_at", { ascending: true });
-      if (channelData) setChannels(channelData as Channel[]);
-
-      const { data: memberData } = await supabase.from("channel_members").select("*");
-      if (memberData) setChannelMembers(memberData as ChannelMember[]);
+      const { data: dependencyData } = await supabase.from("task_dependencies").select("*");
+      if (dependencyData) setTaskDependencies(dependencyData as TaskDependency[]);
 
       const { data: msgData } = await supabase.from("chat_messages").select("*").order("created_at", { ascending: true });
       if (msgData) setMessages(msgData);
@@ -269,16 +272,6 @@ export default function MobileDashboard() {
             if (data) setTasks(data);
           });
         })
-        .on("postgres_changes", { event: "*", schema: "public", table: "channels" }, () => {
-          supabase.from("channels").select("*").order("created_at", { ascending: true }).then(({ data }) => {
-            if (data) setChannels(data as Channel[]);
-          });
-        })
-        .on("postgres_changes", { event: "*", schema: "public", table: "channel_members" }, () => {
-          supabase.from("channel_members").select("*").then(({ data }) => {
-            if (data) setChannelMembers(data as ChannelMember[]);
-          });
-        })
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages" }, (payload) => {
           setMessages(prev => {
             const message = payload.new as ExtendedMessage;
@@ -286,6 +279,13 @@ export default function MobileDashboard() {
               ? prev
               : [...prev, message];
           });
+        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "task_dependencies" }, (payload) => {
+          if (payload.eventType === "INSERT") {
+            setTaskDependencies(prev => prev.some(item => item.id === payload.new.id) ? prev : [...prev, payload.new as TaskDependency]);
+          } else if (payload.eventType === "DELETE") {
+            setTaskDependencies(prev => prev.filter(item => item.id !== payload.old.id));
+          }
         })
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications" }, (payload) => {
           setNotifications(prev => [payload.new as NotificationItem, ...prev]);
@@ -336,6 +336,8 @@ export default function MobileDashboard() {
       })
       .filter((member): member is { id: string; name: string; role: string } => member !== null);
     setTeamMembers(members);
+    const firstOtherMember = members.find(member => member.id !== currentUser?.id);
+    setActiveDmUser(firstOtherMember?.id || "");
   }, [activeProjectId, currentUser, profiles, projectMemberships]);
 
   // 3. GİRİŞ & KAYIT & ŞİFRE SIFIRLAMA İŞLEMİ
@@ -603,49 +605,6 @@ export default function MobileDashboard() {
     }
   };
 
-  // Görev Durumunu Doğrudan Güncelle (Kanban / Modal için)
-  const handleUpdateTaskStatus = async (taskId: string, newStatus: Task["status"]) => {
-    const target = tasks.find(t => t.id === taskId);
-    if (!target || !currentUser) return;
-
-    const completedAt = newStatus === "done" ? new Date().toISOString() : undefined;
-
-    setTasks(prev =>
-      prev.map(task =>
-        task.id === taskId
-          ? { ...task, status: newStatus, completed_at: completedAt }
-          : task
-      )
-    );
-
-    try {
-      await supabase.from("tasks").update({
-        status: newStatus,
-        completed_at: completedAt,
-        completed_by: newStatus === "done" ? currentUser.id : null
-      }).eq("id", taskId);
-
-      if (newStatus === "done") {
-        const recipients = new Set([
-          target.created_by,
-          ...teamMembers
-            .filter(member => member.role === "Proje Yöneticisi")
-            .map(member => member.id)
-        ]);
-        recipients.delete(currentUser.id);
-        recipients.forEach(recipientId => {
-          void sendPushNotification(
-            recipientId,
-            "Görev tamamlandı",
-            `"${target.title}" görevi tamamlandı.`
-          );
-        });
-      }
-    } catch (err) {
-      console.error("Görev durumu güncellenemedi:", err);
-    }
-  };
-
   const handleAddTaskComment = async (taskId: string, content: string) => {
     if (!currentUser) return;
 
@@ -686,11 +645,50 @@ export default function MobileDashboard() {
 
   const handleEditTask = async (taskId: string, changes: { title: string; description?: string; due_date?: string }) => {
     if (!currentUser || !activeProject?.is_manager) return;
+    const currentTask = tasks.find(task => task.id === taskId);
     const { error } = await supabase.from("tasks").update(changes).eq("id", taskId);
     if (!error) {
       setTasks(prev => prev.map(task => task.id === taskId ? { ...task, ...changes } : task));
       setSelectedTask(prev => prev?.id === taskId ? { ...prev, ...changes } : prev);
+
+      if (currentTask?.due_date && changes.due_date) {
+        const shiftMs = new Date(changes.due_date).getTime() - new Date(currentTask.due_date).getTime();
+        if (shiftMs !== 0) await shiftDependentTasks(taskId, shiftMs);
+      }
     }
+  };
+
+  const shiftDependentTasks = async (parentTaskId: string, shiftMs: number, visited = new Set<string>()) => {
+    if (visited.has(parentTaskId)) return;
+    visited.add(parentTaskId);
+    const dependentLinks = taskDependencies.filter(dependency => dependency.depends_on_task_id === parentTaskId);
+    for (const link of dependentLinks) {
+      const dependentTask = tasks.find(task => task.id === link.task_id);
+      if (!dependentTask?.due_date) continue;
+      const nextDueDate = new Date(new Date(dependentTask.due_date).getTime() + shiftMs).toISOString();
+      const { error } = await supabase.from("tasks").update({ due_date: nextDueDate }).eq("id", dependentTask.id);
+      if (!error) {
+        setTasks(prev => prev.map(task => task.id === dependentTask.id ? { ...task, due_date: nextDueDate } : task));
+        setSelectedTask(prev => prev?.id === dependentTask.id ? { ...prev, due_date: nextDueDate } : prev);
+        await shiftDependentTasks(dependentTask.id, shiftMs, visited);
+      }
+    }
+  };
+
+  const handleAddDependency = async (taskId: string, dependsOnTaskId: string) => {
+    if (!currentUser || !activeProject?.is_manager || taskId === dependsOnTaskId) return;
+    const { data, error } = await supabase.from("task_dependencies").insert({
+      project_id: activeProjectId,
+      task_id: taskId,
+      depends_on_task_id: dependsOnTaskId
+    }).select().single();
+    if (!error && data) setTaskDependencies(prev => [...prev, data as TaskDependency]);
+  };
+
+  const handleRemoveDependency = async (dependencyId: string) => {
+    if (!activeProject?.is_manager) return;
+    const { error } = await supabase.from("task_dependencies").delete().eq("id", dependencyId);
+    if (!error) setTaskDependencies(prev => prev.filter(dependency => dependency.id !== dependencyId));
   };
 
   const handleCreatePersonalTodo = async (todo: {
@@ -815,15 +813,79 @@ export default function MobileDashboard() {
     }
   };
 
+  // Mesaj Gönder
+  const handleSendMessage = async () => {
+    if ((!newMessageText.trim() && !pendingAttachment) || !currentUser) return;
+
+    const isDm = chatMode === "dm";
+    const mentionedMembers = teamMembers.filter(m => newMessageText.includes(`@${m.name}`));
+
+    try {
+      const { data } = await supabase.from("chat_messages").insert({
+        project_id: activeProjectId,
+        sender_id: currentUser.id,
+        recipient_id: isDm ? activeDmUser : null,
+        content: newMessageText,
+        mentions: mentionedMembers.map(m => m.id),
+        is_direct_message: isDm
+      }).select().single();
+
+      if (data) {
+        setMessages(prev => [...prev, {
+          ...data,
+          sender: {
+            id: currentUser.id,
+            email: currentUser.email,
+            full_name: currentUser.full_name,
+            role: "member",
+            created_at: ""
+          },
+          attachment: pendingAttachment || undefined
+        }]);
+
+        const recipientIds = isDm
+          ? (activeDmUser && activeDmUser !== currentUser.id ? [activeDmUser] : [])
+          : teamMembers.filter(member => member.id !== currentUser.id).map(member => member.id);
+        recipientIds.forEach(recipientId => {
+          void sendPushNotification(recipientId, "Yeni Pulse mesajı", `${currentUser.full_name} yeni bir mesaj gönderdi.`);
+        });
+      }
+
+      setNewMessageText("");
+      setPendingAttachment(null);
+      setIsMentionOpen(false);
+
+    } catch (err) {
+      console.error("Mesaj gönderilemedi:", err);
+    }
+  };
+
+  const handleSelectMention = (member: { id: string; name: string }) => {
+    const atIndex = newMessageText.lastIndexOf("@");
+    const prefix = atIndex >= 0 ? newMessageText.slice(0, atIndex) : newMessageText;
+    setNewMessageText(`${prefix}@${member.name} `);
+    setIsMentionOpen(false);
+  };
+
+  const handleMessageInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setNewMessageText(val);
+
+    const lastAt = val.lastIndexOf("@");
+    if (lastAt >= 0 && lastAt === val.length - 1) {
+      setIsMentionOpen(true);
+      setMentionFilterText("");
+    } else if (lastAt >= 0 && !val.slice(lastAt).includes(" ")) {
+      setIsMentionOpen(true);
+      setMentionFilterText(val.slice(lastAt + 1));
+    } else {
+      setIsMentionOpen(false);
+    }
+  };
+
   const activeProject = projects.find(p => p.id === activeProjectId);
   const filteredTasks = tasks.filter(t => {
-    // Kanban modunda seçili projeye göre filtrele
-    if (viewMode === "kanban") {
-      if (t.project_id && activeProjectId && t.project_id !== activeProjectId) return false;
-    } else {
-      // Liste modunda: 'all' ise tüm projeler, değilse seçilen proje
-      if (listProjectFilter !== "all" && t.project_id !== listProjectFilter) return false;
-    }
+    if (t.project_id && activeProjectId && t.project_id !== activeProjectId) return false;
     if (taskFilter === "archived") return Boolean(t.archived_at) && Boolean(activeProject?.is_manager);
     if (t.archived_at) return false;
     if (taskFilter === "urgent") return t.priority === "urgent";
@@ -831,7 +893,19 @@ export default function MobileDashboard() {
     return true;
   });
 
+  const activeChatMessages = messages.filter(m => {
+    if (chatMode === "channel") {
+      return m.project_id === activeProjectId && !m.is_direct_message;
+    } else {
+      return m.project_id === activeProjectId && m.is_direct_message && (
+        (m.sender_id === currentUser?.id && m.recipient_id === activeDmUser) ||
+        (m.sender_id === activeDmUser && m.recipient_id === currentUser?.id)
+      );
+    }
+  });
+
   const unreadCount = notifications.filter(n => !n.is_read).length;
+  const activeDmMember = teamMembers.find(m => m.id === activeDmUser);
 
   // YÜKLENİYOR
   if (isCheckingAuth) {
@@ -1194,302 +1268,321 @@ export default function MobileDashboard() {
 
         {/* --- TAB: GÖREVLER (TASKS) --- */}
         {activeTab === "tasks" && (
-          <div className="space-y-3.5">
-            {/* 1. ÜST GÖRÜNÜM SEÇİCİ (KANBAN / LİSTE) */}
-            <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs shadow-sm">
-              <button
-                onClick={() => setViewMode("kanban")}
-                className={`flex-1 py-1.5 rounded-lg font-medium flex items-center justify-center gap-1.5 transition ${
-                  viewMode === "kanban" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                <Kanban size={14} /> Kanban Board (Proje Bazlı)
-              </button>
-              <button
-                onClick={() => setViewMode("list")}
-                className={`flex-1 py-1.5 rounded-lg font-medium flex items-center justify-center gap-1.5 transition ${
-                  viewMode === "list" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                <ListFilter size={14} /> Liste Görünümü (Tüm Görevler)
-              </button>
-            </div>
-
-            {/* 2. KANBAN / LİSTE İÇERİĞİ */}
-            {viewMode === "kanban" ? (
-              /* --- KANBAN BOARD GÖRÜNÜMÜ (PROJE BAZLI) --- */
-              <div className="space-y-3">
-                {/* Proje Seçici Sekmeleri */}
-                <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 scrollbar-none">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    {projects.map(proj => {
-                      const isActive = proj.id === activeProjectId;
-                      const projTaskCount = tasks.filter(t => t.project_id === proj.id && !t.archived_at).length;
-                      return (
-                        <button
-                          key={proj.id}
-                          onClick={() => setActiveProjectId(proj.id)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition shrink-0 ${
-                            isActive
-                              ? "bg-slate-800 border-indigo-500 text-white shadow-sm"
-                              : "bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200"
-                          }`}
-                        >
-                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: proj.color || "#6366f1" }} />
-                          <span className="truncate max-w-[120px]">{proj.name}</span>
-                          <span className="text-[10px] bg-slate-950 px-1.5 py-0.2 rounded-full text-slate-400 font-bold">
-                            {projTaskCount}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {activeProject?.is_manager && (
-                    <button
-                      onClick={() => setIsCreateModalOpen(true)}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-medium shadow-md shadow-indigo-600/30 transition shrink-0"
-                    >
-                      <Plus size={13} /> Görev Ekle
-                    </button>
-                  )}
-                </div>
-
-                {/* Filtre Butonları */}
-                <div className="flex items-center justify-between gap-2 pt-0.5">
-                  <div className="flex gap-1.5 overflow-x-auto text-xs py-0.5">
-                    <button 
-                      onClick={() => setTaskFilter("all")}
-                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "all" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
-                    >
-                      Tümü ({filteredTasks.length})
-                    </button>
-                    <button 
-                      onClick={() => setTaskFilter("urgent")}
-                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "urgent" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
-                    >
-                      Acil
-                    </button>
-                    <button 
-                      onClick={() => setTaskFilter("assigned_to_me")}
-                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "assigned_to_me" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
-                    >
-                      Bana Atanan
-                    </button>
-                    {activeProject?.is_manager && (
-                      <button
-                        onClick={() => setTaskFilter("archived")}
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "archived" ? "bg-amber-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
-                      >
-                        Arşiv
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Kanban Board Bileşeni */}
-                <KanbanBoard 
-                  tasks={filteredTasks}
-                  profiles={profiles as any}
-                  currentUserId={currentUser.id}
-                  onSelectTask={(task) => setSelectedTask(task)}
-                  onToggleStatus={toggleTaskStatus}
-                  onUpdateStatus={handleUpdateTaskStatus}
-                />
-              </div>
-            ) : (
-              /* --- LİSTE GÖRÜNÜMÜ (TÜM GÖREVLER / PROJELER) --- */
-              <div className="space-y-3">
-                {/* Proje Filtresi (Tüm Projeler Seçeneği ile) */}
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs scrollbar-none">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex gap-1.5 overflow-x-auto text-xs py-0.5">
+                <button 
+                  onClick={() => setTaskFilter("all")}
+                  className={`px-3 py-1 rounded-full font-medium transition ${taskFilter === "all" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
+                >
+                  Tümü ({filteredTasks.length})
+                </button>
+                <button 
+                  onClick={() => setTaskFilter("urgent")}
+                  className={`px-3 py-1 rounded-full font-medium transition ${taskFilter === "urgent" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
+                >
+                  Acil
+                </button>
+                <button 
+                  onClick={() => setTaskFilter("assigned_to_me")}
+                  className={`px-3 py-1 rounded-full font-medium transition ${taskFilter === "assigned_to_me" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
+                >
+                  Bana Atanan
+                </button>
+                {activeProject?.is_manager && (
                   <button
-                    onClick={() => setListProjectFilter("all")}
-                    className={`px-3 py-1.5 rounded-xl font-medium text-xs border transition shrink-0 ${
-                      listProjectFilter === "all"
-                        ? "bg-indigo-600 text-white border-indigo-500 shadow-sm"
-                        : "bg-slate-900/60 border-slate-800 text-slate-400 hover:text-white"
-                    }`}
+                    onClick={() => setTaskFilter("archived")}
+                    className={`px-3 py-1 rounded-full font-medium transition ${taskFilter === "archived" ? "bg-amber-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
                   >
-                    🌐 Tüm Projeler ({tasks.filter(t => !t.archived_at).length})
+                    Arşiv
                   </button>
-                  {projects.map(proj => {
-                    const isSelected = listProjectFilter === proj.id;
-                    const count = tasks.filter(t => t.project_id === proj.id && !t.archived_at).length;
-                    return (
-                      <button
-                        key={proj.id}
-                        onClick={() => setListProjectFilter(proj.id)}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-medium text-xs border transition shrink-0 ${
-                          isSelected
-                            ? "bg-slate-800 border-indigo-500 text-white shadow-sm"
-                            : "bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200"
-                        }`}
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: proj.color || "#6366f1" }} />
-                        <span>{proj.name}</span>
-                        <span className="text-[10px] text-slate-400">({count})</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                )}
+              </div>
 
-                {/* Durum / Öncelik Filtresi ve Aksiyon */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex gap-1.5 overflow-x-auto text-xs py-0.5">
-                    <button 
-                      onClick={() => setTaskFilter("all")}
-                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "all" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
-                    >
-                      Tümü ({filteredTasks.length})
-                    </button>
-                    <button 
-                      onClick={() => setTaskFilter("urgent")}
-                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "urgent" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
-                    >
-                      Acil
-                    </button>
-                    <button 
-                      onClick={() => setTaskFilter("assigned_to_me")}
-                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "assigned_to_me" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
-                    >
-                      Bana Atanan
-                    </button>
-                    <button
-                      onClick={() => setTaskFilter("archived")}
-                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${taskFilter === "archived" ? "bg-amber-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}
-                    >
-                      Arşiv
-                    </button>
-                  </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button onClick={() => setViewMode("list")} className={`p-1.5 rounded-xl transition ${viewMode === "list" ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-300"}`} title="Liste görünümü"><ListFilter size={16} /></button>
+                <button onClick={() => setViewMode("kanban")} className={`p-1.5 rounded-xl transition ${viewMode === "kanban" ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-300"}`} title="Kanban görünümü"><Kanban size={16} /></button>
+                <button onClick={() => setViewMode("timeline")} className={`p-1.5 rounded-xl transition ${viewMode === "timeline" ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-300"}`} title="Zaman çizelgesi"><CalendarRange size={16} /></button>
 
+                {activeProject?.is_manager && (
                   <button
                     onClick={() => setIsCreateModalOpen(true)}
-                    className="p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-md shadow-indigo-600/30 transition shrink-0"
-                    title="Yeni Görev Ekle"
+                    className="p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-md shadow-indigo-600/30 transition"
+                    title="Yeni Görev Ata"
                   >
                     <Plus size={16} />
                   </button>
-                </div>
+                )}
+              </div>
+            </div>
 
-                {/* Görevler Listesi */}
-                <div className="space-y-2.5">
-                  {filteredTasks.length === 0 ? (
-                    <div className="text-center py-12 text-slate-400 text-xs bg-slate-900/30 rounded-2xl border border-dashed border-slate-800 space-y-2">
-                      <p>Bu filtrede henüz görev bulunmuyor.</p>
-                      <button
-                        onClick={() => setIsCreateModalOpen(true)}
-                        className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-medium hover:bg-indigo-500 transition"
+            {viewMode === "timeline" ? (
+              <ProjectTimelinePanel
+                tasks={filteredTasks}
+                dependencies={taskDependencies.filter(dependency => dependency.project_id === activeProjectId)}
+                onSelectTask={task => setSelectedTask(task)}
+              />
+            ) : viewMode === "kanban" ? (
+              <KanbanBoard 
+                tasks={filteredTasks}
+                onSelectTask={(task) => setSelectedTask(task)}
+                onToggleStatus={toggleTaskStatus}
+              />
+            ) : (
+              <div className="space-y-2.5">
+                {filteredTasks.length === 0 ? (
+                  <div className="text-center py-12 text-slate-400 text-xs bg-slate-900/30 rounded-2xl border border-dashed border-slate-800 space-y-2">
+                    <p>Bu projede henüz görev bulunmuyor.</p>
+                    <button
+                      onClick={() => setIsCreateModalOpen(true)}
+                      className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-medium hover:bg-indigo-500 transition"
+                    >
+                      + İlk Görevi Ekle
+                    </button>
+                  </div>
+                ) : (
+                  filteredTasks.map(task => {
+                    const isDone = task.status === "done";
+                    return (
+                      <div 
+                        key={task.id}
+                        onClick={() => setSelectedTask(task)}
+                        className={`p-3.5 rounded-xl border cursor-pointer transition-all duration-150 ${
+                          isDone 
+                            ? "bg-slate-900/40 border-slate-800/60 opacity-60" 
+                            : "bg-slate-900 border-slate-800 hover:border-indigo-500/50 shadow-sm"
+                        }`}
                       >
-                        + İlk Görevi Ekle
-                      </button>
-                    </div>
-                  ) : (
-                    filteredTasks.map(task => {
-                      const isDone = task.status === "done";
-                      const taskProj = projects.find(p => p.id === task.project_id);
-                      const assigneeProfile = profiles.find(p => p.id === task.assigned_to);
+                        <div className="flex items-start gap-3">
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleTaskStatus(task.id);
+                            }}
+                            className="mt-0.5 text-slate-400 hover:text-indigo-400 transition"
+                          >
+                            {isDone ? (
+                              <CheckCircle2 size={20} className="text-emerald-500" />
+                            ) : (
+                              <Circle size={20} className="hover:text-indigo-400" />
+                            )}
+                          </button>
 
-                      return (
-                        <div 
-                          key={task.id}
-                          onClick={() => setSelectedTask(task)}
-                          className={`p-3.5 rounded-xl border cursor-pointer transition-all duration-150 ${
-                            isDone 
-                              ? "bg-slate-900/40 border-slate-800/60 opacity-60" 
-                              : "bg-slate-900 border-slate-800 hover:border-indigo-500/50 shadow-sm"
-                          }`}
-                        >
-                          <div className="flex items-start gap-3">
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleTaskStatus(task.id);
-                              }}
-                              className="mt-0.5 text-slate-400 hover:text-indigo-400 transition"
-                            >
-                              {isDone ? (
-                                <CheckCircle2 size={20} className="text-emerald-500" />
-                              ) : (
-                                <Circle size={20} className="hover:text-indigo-400" />
-                              )}
-                            </button>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-sm font-medium leading-snug ${isDone ? "line-through text-slate-400" : "text-slate-100"}`}>
+                              {task.title}
+                            </p>
+                            
+                            {task.description && (
+                              <p className="text-xs text-slate-400 mt-1 line-clamp-1">
+                                {task.description}
+                              </p>
+                            )}
 
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <p className={`text-sm font-medium leading-snug ${isDone ? "line-through text-slate-400" : "text-slate-100"}`}>
-                                  {task.title}
-                                </p>
-                                {taskProj && (
-                                  <span 
-                                    className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-800 border flex items-center gap-1"
-                                    style={{ borderColor: `${taskProj.color || '#6366f1'}40`, color: taskProj.color || '#818cf8' }}
-                                  >
-                                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: taskProj.color || '#6366f1' }} />
-                                    {taskProj.name}
-                                  </span>
-                                )}
-                              </div>
-                              
-                              {task.description && (
-                                <p className="text-xs text-slate-400 mt-1 line-clamp-1">
-                                  {task.description}
-                                </p>
-                              )}
-
-                              <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-400 flex-wrap">
-                                {task.archived_at ? (
-                                  <span className="text-amber-400 font-semibold">Arşivlendi</span>
-                                ) : task.status === "done" ? (
-                                  <span className="text-emerald-400 font-semibold">Tamamlandı</span>
-                                ) : task.status === "in_progress" ? (
-                                  <span className="text-amber-400 font-semibold">Devam Ediyor</span>
-                                ) : task.priority === "urgent" ? (
-                                  <span className="text-rose-400 font-semibold flex items-center gap-1">
-                                    <AlertCircle size={12} /> Acil
-                                  </span>
-                                ) : null}
-
-                                <span className="flex items-center gap-1 bg-slate-800 px-2 py-0.5 rounded-full text-slate-300">
-                                  <UserCheck size={11} className="text-indigo-400" />
-                                  {task.assigned_to === currentUser.id 
-                                    ? "Bana Atandı" 
-                                    : (assigneeProfile?.full_name || assigneeProfile?.email || "Atandı")}
+                            <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-400">
+                              {task.archived_at ? (
+                                <span className="text-amber-400 font-semibold">Arşivlendi</span>
+                              ) : task.status === "done" ? (
+                                <span className="text-emerald-400 font-semibold">Tamamlandı</span>
+                              ) : task.priority === "urgent" && (
+                                <span className="text-rose-400 font-semibold flex items-center gap-1">
+                                  <AlertCircle size={12} /> Acil
                                 </span>
-
-                                {task.due_date && (
-                                  <span className="text-emerald-400">
-                                    Teslim: {new Date(task.due_date).toLocaleDateString("tr-TR", { day: "numeric", month: "short" })}
-                                  </span>
-                                )}
-                              </div>
+                              )}
+                              <span className="flex items-center gap-1 bg-slate-800 px-2 py-0.5 rounded-full text-slate-300">
+                                <UserCheck size={11} className="text-indigo-400" />
+                                {task.assigned_to === currentUser.id 
+                                  ? "Bana Atandı" 
+                                  : (teamMembers.find(m => m.id === task.assigned_to)?.name || "Atandı")}
+                              </span>
+                              {task.due_date && (
+                                <span className="text-emerald-400">
+                                  Teslim: {new Date(task.due_date).toLocaleDateString("tr-TR", { day: "numeric", month: "short" })}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
-                      );
-                    })
-                  )}
-                </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             )}
           </div>
         )}
 
-        {/* --- TAB: SOHBET (CHANNELS & DM) --- */}
-        {activeTab === "chat" && currentUser && (
-          <ChatSection
-            currentUser={currentUser}
-            projects={projects}
-            profiles={profiles as any}
-            channels={channels}
-            setChannels={setChannels}
-            channelMembers={channelMembers}
-            setChannelMembers={setChannelMembers}
-            messages={messages}
-            setMessages={setMessages as any}
-            activeProjectId={activeProjectId}
-            initialDmUserId={chatInitialDmUserId}
-            sendPushNotification={sendPushNotification}
-          />
+        {/* --- TAB: SOHBET (CHAT) --- */}
+        {activeTab === "chat" && (
+          <div className="flex flex-col h-full space-y-3">
+            <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+              <button 
+                onClick={() => setChatMode("channel")}
+                className={`flex-1 py-1.5 rounded-lg font-medium transition ${chatMode === "channel" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-white"}`}
+              >
+                # {activeProject?.name || "Genel Kanal"}
+              </button>
+              <button 
+                onClick={() => setChatMode("dm")}
+                className={`flex-1 py-1.5 rounded-lg font-medium transition ${chatMode === "dm" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-white"}`}
+              >
+                1-e-1 Özel DM
+              </button>
+            </div>
+
+            {chatMode === "dm" && (
+              <div className="flex items-center gap-2 overflow-x-auto py-1 px-0.5 text-xs">
+                {teamMembers.filter(m => m.id !== currentUser.id).map(member => (
+                  <button
+                    key={member.id}
+                    onClick={() => setActiveDmUser(member.id)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border shrink-0 transition ${
+                      activeDmUser === member.id 
+                        ? "bg-slate-800 border-indigo-500 text-white font-medium" 
+                        : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    <div className="w-4 h-4 rounded-full bg-indigo-600 text-[9px] flex items-center justify-center font-bold text-white">
+                      {member.name.charAt(0)}
+                    </div>
+                    <span>{member.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex-1 space-y-3 pt-2">
+              {activeChatMessages.length === 0 ? (
+                <div className="text-center py-12 text-slate-500 text-xs">
+                  Henüz mesaj bulunmuyor. İlk mesajı siz yazın!
+                </div>
+              ) : (
+                activeChatMessages.map(msg => (
+                  <div key={msg.id} className="flex gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-indigo-400 shrink-0">
+                      {msg.sender?.full_name?.charAt(0) || "U"}
+                    </div>
+                    <div className="flex-1 bg-slate-900 border border-slate-800 p-2.5 rounded-2xl rounded-tl-none space-y-1.5">
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-xs font-semibold text-slate-200">
+                          {msg.sender_id === currentUser.id ? "Siz" : (msg.sender?.full_name || "Kullanıcı")}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {formatTimeAgo(msg.created_at)}
+                        </span>
+                      </div>
+                      
+                      {msg.content && (
+                        <p className="text-xs text-slate-300 leading-relaxed">
+                          {msg.content.split(" ").map((word, i) => (
+                            <span key={`${msg.id}-w-${i}`}>
+                              {word.startsWith("@") ? (
+                                <span className="text-indigo-400 font-semibold bg-indigo-950/60 px-1 py-0.5 rounded mr-1">
+                                  {word}
+                                </span>
+                              ) : (
+                                word + " "
+                              )}
+                            </span>
+                          ))}
+                        </p>
+                      )}
+
+                      {msg.attachment && (
+                        <div className="mt-2 p-2 bg-slate-950/80 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {msg.attachment.mime_type.startsWith("image/") ? (
+                              <ImageIcon size={16} className="text-pink-400 shrink-0" />
+                            ) : (
+                              <FileText size={16} className="text-indigo-400 shrink-0" />
+                            )}
+                            <div className="truncate">
+                              <p className="font-medium text-slate-200 truncate text-[11px]">
+                                {msg.attachment.file_name}
+                              </p>
+                              <span className="text-[10px] text-slate-400">
+                                {(msg.attachment.file_size / 1024).toFixed(0)} KB
+                              </span>
+                            </div>
+                          </div>
+
+                          <a 
+                            href={msg.attachment.file_url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-indigo-400 hover:text-indigo-300 underline font-medium shrink-0 ml-2"
+                          >
+                            İndir / Görüntüle
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Mesaj Yazma */}
+            <div className="pt-2 sticky bottom-0 bg-slate-950 relative">
+              <MentionPopover 
+                isOpen={isMentionOpen}
+                filterText={mentionFilterText}
+                teamMembers={teamMembers}
+                onSelect={handleSelectMention}
+              />
+
+              {pendingAttachment && (
+                <div className="mb-2 p-2 bg-indigo-950/50 border border-indigo-500/30 rounded-xl flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 truncate">
+                    <FileText size={14} className="text-indigo-400 shrink-0" />
+                    <span className="text-slate-200 truncate text-[11px] font-medium">
+                      {pendingAttachment.file_name}
+                    </span>
+                  </div>
+                  <button 
+                    onClick={() => setPendingAttachment(null)}
+                    className="p-1 hover:text-rose-400 text-slate-400 transition"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
+              <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-2xl p-1.5 focus-within:border-indigo-500 shadow-lg">
+                <FileUploadButton 
+                  onFileUploaded={(file) => setPendingAttachment(file)}
+                />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewMessageText(prev => prev + "@");
+                    setIsMentionOpen(true);
+                  }}
+                  className="p-2 text-slate-400 hover:text-indigo-400 transition"
+                  title="Kişi Etiketle"
+                >
+                  <AtSign size={17} />
+                </button>
+
+                <input 
+                  type="text" 
+                  value={newMessageText}
+                  onChange={handleMessageInputChange}
+                  onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
+                  placeholder={chatMode === "channel" ? "@etiketle veya gruba yaz..." : `${activeDmMember?.name} kişisine özel yaz...`}
+                  className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none px-1"
+                />
+
+                <button 
+                  onClick={handleSendMessage}
+                  className="p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl transition shadow-md shadow-indigo-600/30"
+                >
+                  <Send size={15} />
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* --- TAB: BİLDİRİMLER (NOTIFICATIONS) --- */}
@@ -1609,7 +1702,8 @@ export default function MobileDashboard() {
                       )}
                       <button
                         onClick={() => {
-                          setChatInitialDmUserId(member.id);
+                          setActiveDmUser(member.id);
+                          setChatMode("dm");
                           setActiveTab("chat");
                         }}
                         className="text-[11px] px-2.5 py-1 rounded-lg bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600 hover:text-white transition"
@@ -1677,11 +1771,15 @@ export default function MobileDashboard() {
         teamMembers={teamMembers}
         canManageTask={Boolean(activeProject?.is_manager)}
         onEditTask={handleEditTask}
+        projectTasks={tasks.filter(task => task.project_id === activeProjectId && !task.archived_at)}
+        dependencies={taskDependencies.filter(dependency => dependency.project_id === activeProjectId)}
+        onAddDependency={handleAddDependency}
+        onRemoveDependency={handleRemoveDependency}
         comments={selectedTask ? taskComments[selectedTask.id] || [] : []}
         onAddComment={handleAddTaskComment}
         onClose={() => setSelectedTask(null)}
         onUpdateStatus={(id, s) => {
-          handleUpdateTaskStatus(id, s);
+          toggleTaskStatus(id);
           if (selectedTask) setSelectedTask(prev => prev ? { ...prev, status: s } : null);
         }}
         onUpdateAssignee={async (id, mId, memberName) => {

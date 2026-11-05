@@ -15,7 +15,7 @@ import {
   Trash2,
   Pencil
 } from "lucide-react";
-import type { Task, TaskComment } from "@/types/database";
+import type { Task, TaskComment, TaskDependency } from "@/types/database";
 import { formatTimeAgo } from "@/lib/utils";
 
 interface TaskDetailModalProps {
@@ -28,6 +28,10 @@ interface TaskDetailModalProps {
   onEditTask: (taskId: string, changes: { title: string; description?: string; due_date?: string }) => void;
   onArchiveTask: (taskId: string, archived: boolean) => void;
   canManageTask: boolean;
+  projectTasks: Task[];
+  dependencies: TaskDependency[];
+  onAddDependency: (taskId: string, dependsOnTaskId: string) => void;
+  onRemoveDependency: (dependencyId: string) => void;
   comments: TaskComment[];
   onAddComment: (taskId: string, content: string) => void;
 }
@@ -42,6 +46,10 @@ export default function TaskDetailModal({
   onEditTask,
   onArchiveTask,
   canManageTask,
+  projectTasks,
+  dependencies,
+  onAddDependency,
+  onRemoveDependency,
   comments,
   onAddComment
 }: TaskDetailModalProps) {
@@ -50,6 +58,7 @@ export default function TaskDetailModal({
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editDueDate, setEditDueDate] = useState("");
+  const [dependencyCandidate, setDependencyCandidate] = useState("");
 
   useEffect(() => {
     if (!task) return;
@@ -68,6 +77,11 @@ export default function TaskDetailModal({
   if (!task) return null;
 
   const isDone = task.status === "done";
+  const taskDependencies = dependencies.filter(dependency => dependency.task_id === task.id);
+  const availableDependencyTasks = projectTasks.filter(projectTask =>
+    projectTask.id !== task.id &&
+    !taskDependencies.some(dependency => dependency.depends_on_task_id === projectTask.id)
+  );
 
   const handleSaveTask = () => {
     if (!editTitle.trim()) return;
@@ -217,6 +231,25 @@ export default function TaskDetailModal({
             </div>
 
           </div>
+
+          {canManageTask && (
+            <div className="space-y-2 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
+              <label className="text-[11px] text-slate-400 flex items-center gap-1">Öncül görev / bağlı olduğu iş</label>
+              <div className="flex gap-2">
+                <select value={dependencyCandidate} onChange={event => setDependencyCandidate(event.target.value)} className="min-w-0 flex-1 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                  <option value="">Görev seçin</option>
+                  {availableDependencyTasks.map(projectTask => <option key={projectTask.id} value={projectTask.id}>{projectTask.title}</option>)}
+                </select>
+                <button disabled={!dependencyCandidate} onClick={() => { onAddDependency(task.id, dependencyCandidate); setDependencyCandidate(""); }} className="px-2.5 rounded-lg bg-indigo-600 text-white text-[11px] disabled:opacity-40">Bağla</button>
+              </div>
+              {taskDependencies.length > 0 && <div className="space-y-1">
+                {taskDependencies.map(dependency => {
+                  const sourceTask = projectTasks.find(projectTask => projectTask.id === dependency.depends_on_task_id);
+                  return <div key={dependency.id} className="flex items-center justify-between gap-2 text-[10px] text-slate-400"><span className="truncate">Önce: {sourceTask?.title || "Görev"}</span><button onClick={() => onRemoveDependency(dependency.id)} className="text-rose-400 hover:text-rose-300">Kaldır</button></div>;
+                })}
+              </div>}
+            </div>
+          )}
 
           {/* GÖREV İÇİ TARTIŞMA / YORUMLAR (THREAD MANTIĞI) */}
           <div className="space-y-3 pt-2 border-t border-slate-800">

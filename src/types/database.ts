@@ -43,6 +43,14 @@ export interface Task {
   project?: Project;
 }
 
+export interface TaskDependency {
+  id: string;
+  project_id: string;
+  task_id: string;
+  depends_on_task_id: string;
+  created_at: string;
+}
+
 export interface TaskComment {
   id: string;
   task_id: string;
@@ -66,30 +74,6 @@ export interface PersonalTodo {
   updated_at: string;
 }
 
-export type ChannelType = 'project' | 'custom';
-export type ChannelRole = 'owner' | 'admin' | 'member';
-
-export interface Channel {
-  id: string;
-  name: string;
-  description?: string;
-  type: ChannelType;
-  project_id?: string;
-  created_by: string;
-  created_at: string;
-  project?: Project;
-  member_count?: number;
-}
-
-export interface ChannelMember {
-  id: string;
-  channel_id: string;
-  user_id: string;
-  role: ChannelRole;
-  joined_at: string;
-  profile?: Profile;
-}
-
 export interface ChatMessage {
   id: string;
   channel_id?: string;
@@ -99,12 +83,29 @@ export interface ChatMessage {
   content: string;
   mentions: string[];
   is_direct_message: boolean;
+  created_at: string;
   attachment_url?: string;
   attachment_name?: string;
   attachment_size?: number;
   attachment_mime?: string;
-  created_at: string;
   sender?: Profile;
+}
+
+export interface Channel {
+  id: string;
+  project_id?: string;
+  name: string;
+  description?: string;
+  type: 'project' | 'custom';
+  created_by: string;
+  created_at: string;
+}
+
+export interface ChannelMember {
+  id: string;
+  channel_id: string;
+  user_id: string;
+  joined_at: string;
 }
 
 export interface NotificationItem {
