@@ -26,6 +26,7 @@ import GeneralCalendar from "@/components/calendar/GeneralCalendar";
 import TeamScreen from "@/components/team/TeamScreen";
 import ChatHub from "@/components/chat/ChatHub";
 import ArchiveScreen from "@/components/chat/ArchiveScreen";
+import ListFilesManager, { type ListAttachment } from "@/components/files/ListFilesManager";
 
 export default function MobileDashboard() {
   const supabase = createClient();
@@ -33,6 +34,7 @@ export default function MobileDashboard() {
   // Oturum State'leri
   const [currentUser, setCurrentUser] = useState<Profile | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [isOnline, setIsOnline] = useState(true);
 
   // Giriş / Kayıt Form State'leri
   const [authMode, setAuthMode] = useState<"login" | "register" | "forgot">("login");
@@ -45,7 +47,7 @@ export default function MobileDashboard() {
 
   // Navigasyon & Görünüm State'leri
   const [activeTab, setActiveTab] = useState<TabType>("personal");
-  const [tasksSubView, setTasksSubView] = useState<"lists" | "board" | "docs">("lists");
+  const [tasksSubView, setTasksSubView] = useState<"lists" | "board" | "docs" | "files">("lists");
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
 
   // Veritabanı State'leri
@@ -57,6 +59,7 @@ export default function MobileDashboard() {
   const [taskComments, setTaskComments] = useState<Record<string, TaskComment[]>>({});
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [attachments, setAttachments] = useState<ListAttachment[]>([]);
 
   // Modallar
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -65,12 +68,28 @@ export default function MobileDashboard() {
 
   // 1. OTURUM & PWA SERVİSİ
   useEffect(() => {
-    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch((err) => {
-        console.warn("SW kayıt hatası:", err);
-      });
-    }
+    if (typeof window !== "undefined") {
+      setIsOnline(navigator.onLine);
+      const handleOnline = () => setIsOnline(true);
+      const handleOffline = () => setIsOnline(false);
 
+      window.addEventListener("online", handleOnline);
+      window.addEventListener("offline", handleOffline);
+
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("/sw.js").catch((err) => {
+          console.warn("SW kayıt hatası:", err);
+        });
+      }
+
+      return () => {
+        window.removeEventListener("online", handleOnline);
+        window.removeEventListener("offline", handleOffline);
+      };
+    }
+  }, []);
+
+  useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         initUserData(session.user.id, session.user.email || "", session.user.user_metadata?.full_name);
@@ -185,7 +204,11 @@ export default function MobileDashboard() {
       const { data: notifData } = await supabase.from("notifications").select("*").eq("user_id", userId).order("created_at", { ascending: false });
       if (notifData) setNotifications(notifData as NotificationItem[]);
 
-      // 8. Realtime Senkronizasyon
+      // 8. Dosya Ekleri
+      const { data: attachData } = await supabase.from("attachments").select("*").order("created_at", { ascending: false });
+      if (attachData) setAttachments(attachData as ListAttachment[]);
+
+      // 9. Realtime Senkronizasyon
       supabase
         .channel("pulse-live-data")
         .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, () => {
@@ -395,6 +418,30 @@ export default function MobileDashboard() {
       );
     } catch (err) {
       console.error("Dokümantasyon kaydedilemedi:", err);
+    }
+  };
+
+  const handleUploadProjectFile = async (projectId: string, uploaded: any) => {
+    if (!currentUser) return;
+    try {
+      const { data, error } = await supabase
+        .from("attachments")
+        .insert({
+          file_name: uploaded.file_name,
+          file_url: uploaded.file_url,
+          file_size: uploaded.file_size,
+          mime_type: uploaded.mime_type,
+          uploaded_by: currentUser.id,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (data) {
+        setAttachments((prev) => [data as ListAttachment, ...prev]);
+      }
+    } catch (err) {
+      console.error("Dosya kaydedilemedi:", err);
     }
   };
 
@@ -615,6 +662,13 @@ export default function MobileDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-indigo-100">
+      {/* Çevrimdışı Uyarı Barı */}
+      {!isOnline && (
+        <div className="bg-amber-500 text-slate-950 px-3 py-1.5 text-center text-xs font-bold sticky top-0 z-50 shadow-xs flex items-center justify-center gap-1.5">
+          <span>⚠️ Çevrimdışı moddasınız. Kayıtlı görevleri görüntüleyebilirsiniz.</span>
+        </div>
+      )}
+
       {/* 1. SEKME 1: KİŞİSEL SAYFA (Ekran 1) */}
       {activeTab === "personal" && (
         <PersonalHomeScreen
@@ -674,6 +728,18 @@ export default function MobileDashboard() {
                     Doküman
                   </button>
                 )}
+                {activeProject.module_files && (
+                  <button
+                    onClick={() => setTasksSubView("files")}
+                    className={`text-xs font-bold px-2.5 py-1.5 rounded-xl transition-all ${
+                      tasksSubView === "files"
+                        ? "bg-indigo-600 text-white"
+                        : "text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    Dosyalar
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -730,6 +796,19 @@ export default function MobileDashboard() {
               initialContent={activeProject.documentation_content || ""}
               onSave={handleSaveDoc}
               readOnly={currentUser.role === "member"}
+            />
+          )}
+
+          {/* Alt Görünüm 4: Dosyalar Modülü */}
+          {tasksSubView === "files" && activeProject && (
+            <ListFilesManager
+              projectId={activeProject.id}
+              projectName={activeProject.name}
+              files={attachments}
+              onUploadFile={async (uploaded) => {
+                await handleUploadProjectFile(activeProject.id, uploaded);
+              }}
+              canUpload={currentUser.role !== "member"}
             />
           )}
         </div>

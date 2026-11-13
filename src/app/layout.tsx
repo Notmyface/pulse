@@ -3,17 +3,17 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Pulse — Ekip İş Takip & İletişim",
-  description: "20-25 kişilik ekipler için hızlı, hafif iş takip ve anlık mesajlaşma platformu",
+  description: "Mobil iş ve proje yönetim sistemi",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black-translucent",
+    statusBarStyle: "default",
     title: "Pulse",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0f172a",
+  themeColor: "#ffffff",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -27,8 +27,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="tr" className="dark">
-      <body className="antialiased min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between">
+    <html lang="tr">
+      <body className="antialiased min-h-screen bg-slate-50 text-slate-900 flex flex-col justify-between">
         {children}
       </body>
     </html>

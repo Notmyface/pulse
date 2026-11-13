@@ -100,45 +100,81 @@ export default function TeamScreen({
           {profiles.map((member) => (
             <div
               key={member.id}
-              className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between"
+              className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2.5"
             >
-              <div className="flex items-center gap-3 min-w-0">
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center text-base font-bold shrink-0"
-                  style={{
-                    backgroundColor: member.user_color ? `${member.user_color}25` : "#e0e7ff",
-                    color: member.user_color || "#4338ca",
-                  }}
-                >
-                  {member.user_emoji || member.full_name.charAt(0)}
-                </div>
-                <div className="truncate">
-                  <div className="flex items-center gap-1.5">
-                    <h4 className="text-xs font-bold text-slate-800 truncate">
-                      {member.full_name}
-                    </h4>
-                    {member.role === "admin" && (
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded-full border border-emerald-200">
-                        Yönetici
-                      </span>
-                    )}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-base font-bold shrink-0"
+                    style={{
+                      backgroundColor: member.user_color ? `${member.user_color}25` : "#e0e7ff",
+                      color: member.user_color || "#4338ca",
+                    }}
+                  >
+                    {member.user_emoji || member.full_name.charAt(0)}
                   </div>
-                  <span className="text-[11px] text-slate-400 font-medium truncate block">
-                    {member.email}
-                  </span>
+                  <div className="truncate">
+                    <div className="flex items-center gap-1.5">
+                      <h4 className="text-xs font-bold text-slate-800 truncate">
+                        {member.full_name}
+                      </h4>
+                      {member.role === "admin" && (
+                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded-full border border-emerald-200">
+                          Yönetici
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-slate-400 font-medium truncate block">
+                      {member.email}
+                    </span>
+                  </div>
                 </div>
+
+                {/* Yetki Ayarlama Butonu */}
+                {isAdmin && (
+                  <button
+                    onClick={() => setSelectedMember(member)}
+                    className="p-2 text-slate-400 hover:text-indigo-600 rounded-xl hover:bg-slate-50 transition-colors shrink-0"
+                    title="Yetkileri Yönet"
+                  >
+                    <Settings className="w-4 h-4" />
+                  </button>
+                )}
               </div>
 
-              {/* Yetki Ayarlama Butonu */}
-              {isAdmin && (
-                <button
-                  onClick={() => setSelectedMember(member)}
-                  className="p-2 text-slate-400 hover:text-indigo-600 rounded-xl hover:bg-slate-50 transition-colors shrink-0"
-                  title="Yetkileri Yönet"
-                >
-                  <Settings className="w-4 h-4" />
-                </button>
-              )}
+              {/* Ekran 7 İçi Hızlı İzin Ayarları */}
+              <div className="pt-2 border-t border-slate-100 flex flex-col gap-2 text-xs text-slate-600">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-medium text-slate-500">
+                    Projeleri görme izni
+                  </span>
+                  <input
+                    type="checkbox"
+                    defaultChecked={member.role !== "member"}
+                    disabled={!isAdmin || member.role === "admin"}
+                    onChange={(e) => {
+                      if (isAdmin) {
+                        onUpdateRole(member.id, e.target.checked ? "manager" : "member");
+                      }
+                    }}
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-medium text-slate-500">
+                    Takvim görünürlüğü
+                  </span>
+                  <select
+                    disabled={!isAdmin}
+                    defaultValue={member.role === "admin" ? "all" : "own"}
+                    className="text-[11px] font-semibold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 focus:outline-none"
+                  >
+                    <option value="all">Tüm ekip</option>
+                    <option value="own">Sadece kendi</option>
+                  </select>
+                </div>
+              </div>
             </div>
           ))}
         </div>

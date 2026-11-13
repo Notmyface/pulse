@@ -99,6 +99,20 @@ export default function TaskEditModal({
     );
   };
 
+  const handleClose = () => {
+    const isDirty =
+      title.trim() !== (task?.title || "") ||
+      description.trim() !== (task?.description || "") ||
+      dueDate !== (task?.due_date ? task.due_date.slice(0, 10) : "");
+
+    if (isDirty) {
+      if (!window.confirm("Kaydedilmemiş değişiklikleriniz var. Çıkmak istediğinize emin misiniz?")) {
+        return;
+      }
+    }
+    onClose();
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || isSaving) return;
@@ -139,7 +153,7 @@ export default function TaskEditModal({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1.5 -ml-1.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors"
           >
             <X className="w-5 h-5" />
