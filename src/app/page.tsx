@@ -377,22 +377,31 @@ export default function MobileDashboard() {
   const handleCreateProject = async (proj: {
     name: string;
     category_id: string;
-    modules: any;
+    modules?: any;
   }) => {
     if (!currentUser) return;
     try {
+      const activeModules = proj.modules || {
+        module_todo: true,
+        module_docs: true,
+        module_files: true,
+        module_kanban: true,
+        module_gantt: true,
+        module_chat: true,
+      };
+
       const { data, error } = await supabase
         .from("projects")
         .insert({
           name: proj.name,
           category_id: proj.category_id || null,
           created_by: currentUser.id,
-          module_todo: proj.modules.module_todo,
-          module_docs: proj.modules.module_docs,
-          module_files: proj.modules.module_files,
-          module_kanban: proj.modules.module_kanban,
-          module_gantt: proj.modules.module_gantt,
-          module_chat: proj.modules.module_chat,
+          module_todo: activeModules.module_todo,
+          module_docs: activeModules.module_docs,
+          module_files: activeModules.module_files,
+          module_kanban: activeModules.module_kanban,
+          module_gantt: activeModules.module_gantt,
+          module_chat: activeModules.module_chat,
         })
         .select()
         .single();
@@ -401,9 +410,58 @@ export default function MobileDashboard() {
       if (data) {
         setProjects((prev) => [...prev, data as Project]);
         setActiveProjectId(data.id);
+        return data.id;
       }
     } catch (err) {
       console.error("Liste oluşturulamadı:", err);
+    }
+  };
+
+  const handleUpdateProject = async (
+    projectId: string,
+    updates: {
+      name: string;
+      category_id: string | null;
+      modules: {
+        module_todo: boolean;
+        module_docs: boolean;
+        module_files: boolean;
+        module_kanban: boolean;
+        module_gantt: boolean;
+        module_chat: boolean;
+      };
+    }
+  ) => {
+    try {
+      const payload: any = {
+        name: updates.name,
+        category_id: updates.category_id || null,
+        module_todo: updates.modules.module_todo,
+        module_docs: updates.modules.module_docs,
+        module_files: updates.modules.module_files,
+        module_kanban: updates.modules.module_kanban,
+        module_gantt: updates.modules.module_gantt,
+        module_chat: updates.modules.module_chat,
+      };
+
+      const { error } = await supabase.from("projects").update(payload).eq("id", projectId);
+      if (error) throw error;
+
+      setProjects((prev) =>
+        prev.map((p) => (p.id === projectId ? ({ ...p, ...payload } as Project) : p))
+      );
+    } catch (err) {
+      console.error("Proje güncellenemedi:", err);
+    }
+  };
+
+  const handleArchiveProject = async (projectId: string) => {
+    try {
+      const { error } = await supabase.from("projects").update({ is_archived: true }).eq("id", projectId);
+      if (error) throw error;
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+    } catch (err) {
+      console.error("Proje arşivlenemedi:", err);
     }
   };
 
@@ -756,7 +814,9 @@ export default function MobileDashboard() {
               }}
               onCreateCategory={handleCreateCategory}
               onCreateProject={handleCreateProject}
-              canManageLists={currentUser.role === "admin" || currentUser.role === "manager"}
+              onUpdateProject={handleUpdateProject}
+              onArchiveProject={handleArchiveProject}
+              canManageLists={true}
             />
           )}
 
@@ -895,6 +955,7 @@ export default function MobileDashboard() {
         currentUserId={currentUser.id}
         comments={editingTask?.id ? taskComments[editingTask.id] || [] : []}
         onAddComment={handleAddComment}
+        onCreateProject={handleCreateProject}
       />
 
       {/* SABİT MOBİL ALT MENÜ (5 SEÇENEK) */}

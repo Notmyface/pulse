@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import {
+  Plus,
   X,
   Trash2,
   Calendar as CalendarIcon,
@@ -30,6 +31,7 @@ interface TaskEditModalProps {
   currentUserId: string;
   comments?: TaskComment[];
   onAddComment?: (taskId: string, content: string) => Promise<void>;
+  onCreateProject?: (proj: { name: string; category_id: string }) => Promise<string | undefined>;
 }
 
 const COLOR_PALETTE = [
@@ -55,6 +57,7 @@ export default function TaskEditModal({
   currentUserId,
   comments = [],
   onAddComment,
+  onCreateProject,
 }: TaskEditModalProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -66,6 +69,12 @@ export default function TaskEditModal({
   const [newComment, setNewComment] = useState("");
   const [showAllComments, setShowAllComments] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Hızlı Proje Ekleme
+  const [isQuickAddingProject, setIsQuickAddingProject] = useState(false);
+  const [quickProjName, setQuickProjName] = useState("");
+  const [quickProjCatId, setQuickProjCatId] = useState("");
+  const [isCreatingQuickProj, setIsCreatingQuickProj] = useState(false);
 
   useEffect(() => {
     if (task) {
@@ -111,6 +120,26 @@ export default function TaskEditModal({
       }
     }
     onClose();
+  };
+
+  const handleQuickCreateProject = async () => {
+    if (!quickProjName.trim() || !onCreateProject || isCreatingQuickProj) return;
+    try {
+      setIsCreatingQuickProj(true);
+      const newId = await onCreateProject({
+        name: quickProjName.trim(),
+        category_id: quickProjCatId,
+      });
+      if (newId) {
+        setSelectedProjectId(newId);
+      }
+      setQuickProjName("");
+      setIsQuickAddingProject(false);
+    } catch (err) {
+      console.error("Hızlı proje oluşturulamadı:", err);
+    } finally {
+      setIsCreatingQuickProj(false);
+    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -261,9 +290,56 @@ export default function TaskEditModal({
 
           {/* Liste (Kategori > Liste) */}
           <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-              Liste (Kategori {">"} Liste)
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold text-slate-600">
+                Liste / Proje (Kategori {">"} Liste)
+              </label>
+              {onCreateProject && (
+                <button
+                  type="button"
+                  onClick={() => setIsQuickAddingProject(!isQuickAddingProject)}
+                  className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5"
+                >
+                  <Plus className="w-3 h-3" />
+                  {isQuickAddingProject ? "Vazgeç" : "Yeni Proje"}
+                </button>
+              )}
+            </div>
+
+            {isQuickAddingProject && (
+              <div className="mb-2.5 p-3 bg-indigo-50/70 border border-indigo-200/80 rounded-2xl space-y-2 animate-in fade-in duration-150">
+                <input
+                  type="text"
+                  value={quickProjName}
+                  onChange={(e) => setQuickProjName(e.target.value)}
+                  placeholder="Yeni proje adı..."
+                  className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                />
+                <div className="flex items-center gap-2">
+                  <select
+                    value={quickProjCatId}
+                    onChange={(e) => setQuickProjCatId(e.target.value)}
+                    className="flex-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none"
+                  >
+                    <option value="">Kategorisiz (Genel)</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleQuickCreateProject}
+                    disabled={!quickProjName.trim() || isCreatingQuickProj}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs disabled:opacity-50 shrink-0"
+                  >
+                    {isCreatingQuickProj ? "..." : "Oluştur"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             <select
               value={selectedProjectId}
               onChange={(e) => setSelectedProjectId(e.target.value)}
