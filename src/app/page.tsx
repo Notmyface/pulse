@@ -1471,7 +1471,7 @@ export default function MobileDashboard() {
 
   // GİRİŞ YAPILMIŞSA: DASHBOARD
   return (
-    <div className="flex flex-col h-screen w-full bg-slate-950 text-slate-100 relative overflow-hidden">
+    <div className="flex flex-col h-screen w-full max-w-none bg-slate-950 text-slate-100 relative overflow-hidden">
       
       {/* 1. ÜST BAŞLIK */}
       <header className="px-4 pt-12 pb-3 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 flex items-center justify-between sticky top-0 z-30">

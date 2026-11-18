@@ -178,7 +178,7 @@ export default function ChatHub({
 
   // 2. Ana Sohbet Listesi (Ekran 5)
   return (
-    <div className="pb-24 pt-2 px-4 max-w-md mx-auto space-y-4">
+    <div className="pb-24 pt-2 px-2 sm:px-4 w-full space-y-4">
       {/* 1. Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold text-slate-800">Sohbet</h2>

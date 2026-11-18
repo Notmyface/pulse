@@ -258,7 +258,7 @@ export default function PersonalHomeScreen({
   const openTasksCount = userPersonalTasks.filter((t) => t.status !== "done").length;
 
   return (
-    <div className="pb-24 pt-2 px-4 max-w-md mx-auto min-h-screen">
+    <div className="pb-24 pt-2 px-2 sm:px-4 w-full min-h-screen">
       {/* 1. Üst Başlık ve Karşılama */}
       <div className="flex items-center justify-between py-3 mb-2">
         <div className="flex items-center gap-3">

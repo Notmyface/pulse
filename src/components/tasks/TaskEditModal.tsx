@@ -340,9 +340,9 @@ export default function TaskEditModal({
                     className="flex-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none"
                   >
                     <option value="">Kategorisiz (Genel)</option>
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
+                    {Array.from(new Map(categories.filter((category) => category.id).map((category) => [category.id, category])).values()).map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
                       </option>
                     ))}
                   </select>
@@ -364,7 +364,7 @@ export default function TaskEditModal({
               className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
             >
               <option value="">Kişisel Görev (Listesiz)</option>
-              {projects.map((proj) => {
+              {projects.filter((project, index, allProjects) => allProjects.findIndex((item) => item.id === project.id) === index).map((proj) => {
                 const cat = categories.find((c) => c.id === proj.category_id);
                 return (
                   <option key={proj.id} value={proj.id}>
