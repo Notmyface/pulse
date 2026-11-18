@@ -52,6 +52,9 @@ import TeamScreen from "@/components/team/TeamScreen";
 import ChatHub from "@/components/chat/ChatHub";
 import ProfileScreen from "@/components/profile/ProfileScreen";
 import CategoryListManager from "@/components/tasks/CategoryListManager";
+import ListDocEditor from "@/components/docs/ListDocEditor";
+import ListFilesManager, { type ListAttachment } from "@/components/files/ListFilesManager";
+import ArchiveScreen from "@/components/chat/ArchiveScreen";
 import type { UserRole } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
 
@@ -85,7 +88,7 @@ export default function MobileDashboard() {
   const [taskFilter, setTaskFilter] = useState<"all" | "assigned_to_me" | "urgent" | "archived">("all");
   
   // Canlı Veritabanı State'leri
-  const [projects, setProjects] = useState<Array<{ id: string; name: string; color: string; is_manager: boolean; created_by?: string }>>([]);
+  const [projects, setProjects] = useState<Array<{ id: string; name: string; color: string; is_manager: boolean; created_by?: string; documentation_content?: string; module_docs?: boolean; module_files?: boolean; module_kanban?: boolean; module_gantt?: boolean; module_chat?: boolean }>>([]);
   const [activeProjectId, setActiveProjectId] = useState<string>("");
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [newProjectInput, setNewProjectInput] = useState("");
@@ -117,6 +120,8 @@ export default function MobileDashboard() {
   const [isTaskEditModalOpen, setIsTaskEditModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [taskModuleTab, setTaskModuleTab] = useState<"todo" | "docs" | "files" | "archive">("todo");
+  const [projectAttachments, setProjectAttachments] = useState<ListAttachment[]>([]);
 
   // Dosya ve Mention
   const [pendingAttachment, setPendingAttachment] = useState<UploadedFile | null>(null);
@@ -213,7 +218,19 @@ export default function MobileDashboard() {
       // 1. Projeleri Çek
       const { data: projData } = await supabase.from("projects").select("*");
       if (projData && projData.length > 0) {
-        const formatted = projData.map((p: any) => ({ id: p.id, name: p.name, color: p.color_code || "#6366f1", is_manager: p.created_by === userId, created_by: p.created_by }));
+        const formatted = projData.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          color: p.color_code || "#6366f1",
+          is_manager: p.created_by === userId,
+          created_by: p.created_by,
+          documentation_content: p.documentation_content || "",
+          module_docs: p.module_docs ?? true,
+          module_files: p.module_files ?? true,
+          module_kanban: p.module_kanban ?? true,
+          module_gantt: p.module_gantt ?? true,
+          module_chat: p.module_chat ?? true
+        }));
         setProjects(formatted);
         setActiveProjectId(formatted[0].id);
       } else {
@@ -225,7 +242,7 @@ export default function MobileDashboard() {
         }).select().single();
 
         if (newProj) {
-          setProjects([{ id: newProj.id, name: newProj.name, color: newProj.color_code, is_manager: true, created_by: userId }]);
+          setProjects([{ id: newProj.id, name: newProj.name, color: newProj.color_code, is_manager: true, created_by: userId, documentation_content: "", module_docs: true, module_files: true, module_kanban: true, module_gantt: true, module_chat: true }]);
           setActiveProjectId(newProj.id);
         } else if (newProjectError) {
           console.error("İlk proje oluşturulamadı:", newProjectError);
@@ -269,6 +286,28 @@ export default function MobileDashboard() {
 
       const { data: dependencyData } = await supabase.from("task_dependencies").select("*");
       if (dependencyData) setTaskDependencies(dependencyData as TaskDependency[]);
+
+      const { data: attachmentData } = await supabase.from("project_attachments").select("*").order("created_at", { ascending: false });
+      if (attachmentData) {
+        setProjectAttachments((attachmentData as Array<{
+          id: string;
+          project_id: string;
+          file_name: string;
+          file_url: string;
+          file_size: number;
+          mime_type: string;
+          created_at: string;
+          uploaded_by: string;
+        }>).map(file => ({
+          id: file.id,
+          project_id: file.project_id,
+          file_name: file.file_name,
+          file_url: file.file_url,
+          file_size: file.file_size,
+          mime_type: file.mime_type,
+          created_at: file.created_at
+        })));
+      }
 
       const { data: msgData } = await supabase.from("chat_messages").select("*").order("created_at", { ascending: true });
       if (msgData) setMessages(msgData);
@@ -518,7 +557,7 @@ export default function MobileDashboard() {
       }).select().single();
 
       if (data) {
-        const newProj = { id: data.id, name: data.name, color: data.color_code, is_manager: true, created_by: authUser.id };
+        const newProj = { id: data.id, name: data.name, color: data.color_code, is_manager: true, created_by: authUser.id, documentation_content: "", module_docs: true, module_files: true, module_kanban: true, module_gantt: true, module_chat: true };
         setProjects(prev => [...prev, newProj]);
         setActiveProjectId(data.id);
         setNewProjectInput("");
@@ -560,7 +599,13 @@ export default function MobileDashboard() {
         name: createdProject.name,
         color: createdProject.color_code || "#6366f1",
         is_manager: true,
-        created_by: data.user.id
+        created_by: data.user.id,
+        documentation_content: "",
+        module_docs: project.modules.module_docs,
+        module_files: project.modules.module_files,
+        module_kanban: project.modules.module_kanban,
+        module_gantt: project.modules.module_gantt,
+        module_chat: project.modules.module_chat
       }]);
       setActiveProjectId(createdProject.id);
     }
@@ -758,6 +803,48 @@ export default function MobileDashboard() {
     } catch (err) {
       console.error("Görev güncellenemedi:", err);
     }
+  };
+
+  const handleSaveProjectDocumentation = async (projectId: string, content: string) => {
+    const { error } = await supabase.from("projects").update({ documentation_content: content }).eq("id", projectId);
+    if (error) throw error;
+  };
+
+  const handleUploadProjectAttachment = async (file: UploadedFile) => {
+    if (!currentUser || !activeProjectId) throw new Error("Aktif proje bulunamadı");
+    const { data, error } = await supabase.from("project_attachments").insert({
+      project_id: activeProjectId,
+      uploaded_by: currentUser.id,
+      file_name: file.file_name,
+      file_url: file.file_url,
+      file_size: file.file_size,
+      mime_type: file.mime_type
+    }).select("*").single();
+    if (error) throw error;
+    if (data) {
+      setProjectAttachments(prev => [{
+        id: data.id,
+        project_id: data.project_id,
+        file_name: data.file_name,
+        file_url: data.file_url,
+        file_size: data.file_size,
+        mime_type: data.mime_type,
+        created_at: data.created_at
+      }, ...prev]);
+    }
+  };
+
+  const handleDeleteProjectAttachment = async (fileId: string) => {
+    const { error } = await supabase.from("project_attachments").delete().eq("id", fileId);
+    if (error) throw error;
+    setProjectAttachments(prev => prev.filter(file => file.id !== fileId));
+  };
+
+  const handleRestoreArchivedTask = async (taskId: string) => {
+    if (!activeProject?.is_manager) throw new Error("Yetkiniz yok");
+    const { error } = await supabase.from("tasks").update({ archived_at: null, archived_by: null }).eq("id", taskId);
+    if (error) throw error;
+    setTasks(prev => prev.map(task => task.id === taskId ? { ...task, archived_at: undefined, archived_by: undefined } : task));
   };
 
   const handleAddTaskComment = async (taskId: string, content: string) => {
@@ -1524,6 +1611,54 @@ export default function MobileDashboard() {
         {/* --- TAB: GÖREVLER (TASKS) --- */}
         {activeTab === "tasks" && (
           <div className="space-y-4">
+            <div className="grid grid-cols-4 gap-1 bg-slate-900 border border-slate-800 rounded-xl p-1">
+              {[
+                { id: "todo", label: "Görevler" },
+                { id: "docs", label: "Döküman" },
+                { id: "files", label: "Dosyalar" },
+                { id: "archive", label: "Arşiv" }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setTaskModuleTab(tab.id as "todo" | "docs" | "files" | "archive")}
+                  className={`py-1.5 rounded-lg text-[10px] font-semibold transition ${taskModuleTab === tab.id ? "bg-indigo-600 text-white" : "text-slate-400"}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {taskModuleTab === "docs" && activeProject && (
+              <ListDocEditor
+                listId={activeProject.id}
+                listName={activeProject.name}
+                initialContent={projects.find(project => project.id === activeProject.id)?.documentation_content || ""}
+                onSave={handleSaveProjectDocumentation}
+                readOnly={!activeProject.is_manager}
+              />
+            )}
+
+            {taskModuleTab === "files" && activeProject && (
+              <ListFilesManager
+                projectId={activeProject.id}
+                projectName={activeProject.name}
+                files={projectAttachments.filter(file => file.project_id === activeProject.id)}
+                onUploadFile={handleUploadProjectAttachment}
+                onDeleteFile={handleDeleteProjectAttachment}
+                canUpload={activeProject.is_manager}
+              />
+            )}
+
+            {taskModuleTab === "archive" && activeProject && (
+              <ArchiveScreen
+                archivedTasks={tasks.filter(task => task.project_id === activeProject.id && task.archived_at)}
+                projects={projects.map(project => ({ id: project.id, name: project.name, color_code: project.color, is_archived: false, created_at: "" }))}
+                onRestoreTask={handleRestoreArchivedTask}
+              />
+            )}
+
+            {taskModuleTab === "todo" && (
+              <>
             {showCategoryManager && (
               <CategoryListManager
                 categories={categories}
@@ -1714,6 +1849,8 @@ export default function MobileDashboard() {
                   })
                 )}
               </div>
+            )}
+              </>
             )}
           </div>
         )}
