@@ -187,18 +187,43 @@ export default function MobileDashboard() {
       }
 
       // 5. Yorumlar
-      const { data: commentData } = await supabase.from("task_comments").select("*, author:profiles(*)").order("created_at", { ascending: true });
-      if (commentData) {
+      const { data: commentData, error: commentError } = await supabase
+        .from("task_comments")
+        .select("*")
+        .order("created_at", { ascending: true });
+
+      if (commentError) {
+        console.error("Yorumlar yüklenirken hata:", commentError);
+      } else if (commentData) {
+        const loadedProfiles = (profData || []) as Profile[];
         const grouped = commentData.reduce<Record<string, TaskComment[]>>((acc, item: any) => {
-          acc[item.task_id] = [...(acc[item.task_id] || []), item];
+          const author = loadedProfiles.find((p) => p.id === item.user_id);
+          const commentWithAuthor: TaskComment = {
+            ...item,
+            author,
+          };
+          acc[item.task_id] = [...(acc[item.task_id] || []), commentWithAuthor];
           return acc;
         }, {});
         setTaskComments(grouped);
       }
 
       // 6. Mesajlar
-      const { data: msgData } = await supabase.from("chat_messages").select("*, sender:profiles(*)").order("created_at", { ascending: true });
-      if (msgData) setMessages(msgData as ChatMessage[]);
+      const { data: msgData, error: msgError } = await supabase
+        .from("chat_messages")
+        .select("*")
+        .order("created_at", { ascending: true });
+
+      if (msgError) {
+        console.error("Mesajlar yüklenirken hata:", msgError);
+      } else if (msgData) {
+        const loadedProfiles = (profData || []) as Profile[];
+        const mappedMessages = msgData.map((m: any) => ({
+          ...m,
+          sender: loadedProfiles.find((p) => p.id === m.sender_id),
+        }));
+        setMessages(mappedMessages as ChatMessage[]);
+      }
 
       // 7. Bildirimler
       const { data: notifData } = await supabase.from("notifications").select("*").eq("user_id", userId).order("created_at", { ascending: false });
@@ -215,7 +240,22 @@ export default function MobileDashboard() {
           refreshTasks();
         })
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages" }, (payload) => {
-          setMessages((prev) => [...prev, payload.new as ChatMessage]);
+          const newMsg = payload.new as ChatMessage;
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+          });
+        })
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "task_comments" }, (payload) => {
+          const newComment = payload.new as TaskComment;
+          setTaskComments((prev) => {
+            const list = prev[newComment.task_id] || [];
+            if (list.some((c) => c.id === newComment.id)) return prev;
+            return {
+              ...prev,
+              [newComment.task_id]: [...list, newComment],
+            };
+          });
         })
         .subscribe();
     } catch (err) {
