@@ -5,6 +5,7 @@ import { User } from "lucide-react";
 interface TeamMember {
   id: string;
   name: string;
+  username?: string;
   role: string;
 }
 
@@ -23,8 +24,9 @@ export default function MentionPopover({
 }: MentionPopoverProps) {
   if (!isOpen) return null;
 
-  const filteredMembers = teamMembers.filter(m => 
-    m.name.toLowerCase().includes(filterText.toLowerCase())
+  const filteredMembers = teamMembers.filter(member =>
+    member.name.toLowerCase().includes(filterText.toLowerCase()) ||
+    (member.username || "").toLowerCase().includes(filterText.toLowerCase())
   );
 
   if (filteredMembers.length === 0) return null;
@@ -50,7 +52,7 @@ export default function MentionPopover({
               </span>
             </div>
             <span className="text-[10px] text-slate-400 group-hover:text-indigo-300">
-              {member.role}
+              @{member.username || member.name.toLowerCase().replace(/[^a-z0-9]/g, "")}
             </span>
           </button>
         ))}

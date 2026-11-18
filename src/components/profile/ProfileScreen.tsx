@@ -15,6 +15,7 @@ export default function ProfileScreen({ profile, onProfileUpdated, onSignOut }: 
   const supabase = createClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fullName, setFullName] = useState(profile.full_name);
+  const [username, setUsername] = useState(profile.username || profile.email.split("@")[0].toLowerCase());
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [status, setStatus] = useState("");
@@ -56,13 +57,18 @@ export default function ProfileScreen({ profile, onProfileUpdated, onSignOut }: 
 
   const handleSave = async () => {
     if (!fullName.trim()) return;
+    const normalizedUsername = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+    if (!normalizedUsername) {
+      setStatus("Kullanıcı adı boş bırakılamaz.");
+      return;
+    }
     setIsSaving(true);
     setStatus("");
-    const { error } = await supabase.from("profiles").update({ full_name: fullName.trim() }).eq("id", profile.id);
+    const { error } = await supabase.from("profiles").update({ full_name: fullName.trim(), username: normalizedUsername }).eq("id", profile.id);
     if (error) {
-      setStatus(error.message);
+      setStatus(error.code === "23505" ? "Bu kullanıcı adı başka bir kullanıcı tarafından alınmış." : error.message);
     } else {
-      onProfileUpdated({ ...profile, full_name: fullName.trim() });
+      onProfileUpdated({ ...profile, full_name: fullName.trim(), username: normalizedUsername });
       setStatus("Profil bilgileriniz güncellendi.");
     }
     setIsSaving(false);
@@ -113,6 +119,14 @@ export default function ProfileScreen({ profile, onProfileUpdated, onSignOut }: 
           <label className="block space-y-1">
             <span className="text-[11px] font-semibold text-slate-500 flex items-center gap-1"><User size={12} /> Ad Soyad</span>
             <input value={fullName} onChange={(event) => setFullName(event.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20" />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[11px] font-semibold text-slate-500">Kullanıcı Adı</span>
+            <div className="flex items-center px-3 bg-slate-50 border border-slate-200 rounded-xl focus-within:ring-2 focus-within:ring-indigo-500/20">
+              <span className="text-sm font-semibold text-indigo-600">@</span>
+              <input value={username} onChange={(event) => setUsername(event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))} placeholder="kullaniciadi" className="min-w-0 flex-1 px-1 py-2.5 bg-transparent text-sm text-slate-800 focus:outline-none" />
+            </div>
+            <span className="text-[10px] text-slate-400">Benzersizdir; mesajlarda @ kullanıcı adıyla bulunursunuz.</span>
           </label>
           <div className="space-y-1">
             <span className="text-[11px] font-semibold text-slate-500 flex items-center gap-1"><Mail size={12} /> E-posta</span>

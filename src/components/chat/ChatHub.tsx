@@ -14,20 +14,25 @@ import {
   Circle,
   Archive,
 } from "lucide-react";
-import type { Profile, Project, ChatMessage, Channel } from "@/types/database";
+import type { Profile, Project, ChatMessage, Channel, ChannelMember } from "@/types/database";
+import CreateChannelModal from "@/components/chat/CreateChannelModal";
+import InviteChannelMemberModal from "@/components/chat/InviteChannelMemberModal";
 
 interface ChatHubProps {
   currentUser: Profile;
   profiles: Profile[];
   projects: Project[];
   channels: Channel[];
-  channelMembers?: Array<{ channel_id: string; user_id: string }>;
+  setChannels: React.Dispatch<React.SetStateAction<Channel[]>>;
+  channelMembers?: ChannelMember[];
+  setChannelMembers: React.Dispatch<React.SetStateAction<ChannelMember[]>>;
   messages: ChatMessage[];
   onSendMessage: (params: {
     content: string;
     channel_id?: string;
     project_id?: string;
     recipient_id?: string;
+    mentions?: string[];
   }) => Promise<void>;
   onOpenArchive?: () => void;
 }
@@ -37,7 +42,9 @@ export default function ChatHub({
   profiles,
   projects,
   channels,
+  setChannels,
   channelMembers = [],
+  setChannelMembers,
   messages,
   onSendMessage,
   onOpenArchive,
@@ -52,6 +59,8 @@ export default function ChatHub({
 
   const [inputMessage, setInputMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
+  const [isInviteChannelOpen, setIsInviteChannelOpen] = useState(false);
 
   // Filtrelenmiş Mesajlar (Seçili sohbet için)
   const currentChatMessages = messages.filter((msg) => {
@@ -77,8 +86,12 @@ export default function ChatHub({
 
     try {
       setIsSending(true);
+      const mentionedUserIds = profiles
+        .filter(profile => inputMessage.includes(`@${profile.username || profile.email.split("@")[0].toLowerCase()}`))
+        .map(profile => profile.id);
       await onSendMessage({
         content: inputMessage.trim(),
+        mentions: mentionedUserIds,
         project_id: selectedChat.type === "project" ? selectedChat.id : undefined,
         recipient_id: selectedChat.type === "dm" ? selectedChat.id : undefined,
         channel_id: selectedChat.type === "channel" ? selectedChat.id : undefined,
@@ -91,10 +104,45 @@ export default function ChatHub({
     }
   };
 
+  const chatModals = (
+    <>
+    {isCreateChannelOpen && (
+      <CreateChannelModal
+        isOpen={true}
+        onClose={() => setIsCreateChannelOpen(false)}
+        currentUserId={currentUser.id}
+        profiles={profiles}
+        onChannelCreated={(channel) => {
+          setChannels(prev => prev.some(item => item.id === channel.id) ? prev : [...prev, channel]);
+          setIsCreateChannelOpen(false);
+        }}
+      />
+    )}
+    {isInviteChannelOpen && selectedChat?.type === "channel" && (
+      <InviteChannelMemberModal
+        isOpen={true}
+        onClose={() => setIsInviteChannelOpen(false)}
+        channel={channels.find(channel => channel.id === selectedChat.id) as Channel}
+        currentUserId={currentUser.id}
+        profiles={profiles}
+        existingMemberIds={channelMembers.filter(member => member.channel_id === selectedChat.id).map(member => member.user_id)}
+        onMembersAdded={(newMemberIds) => {
+          setChannelMembers(prev => [
+            ...prev,
+            ...newMemberIds.map(userId => ({ channel_id: selectedChat.id, user_id: userId, role: "member" as const }))
+          ]);
+        }}
+      />
+    )}
+    </>
+  );
+
   // 1. Seçili Sohbet Ekranı (Mesajlaşma İçi)
   if (selectedChat) {
     return (
-      <div className="flex flex-col h-[85vh] max-w-md mx-auto bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
+      <>
+        {chatModals}
+        <div className="flex flex-col h-[85vh] max-w-md mx-auto bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
         {/* Sohbet Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50/80">
           <div className="flex items-center gap-2.5">
@@ -111,6 +159,16 @@ export default function ChatHub({
               <span className="text-[10px] text-emerald-600 font-medium">Aktif</span>
             </div>
           </div>
+          {selectedChat.type === "channel" && (
+            <button
+              type="button"
+              onClick={() => setIsInviteChannelOpen(true)}
+              className="p-2 rounded-xl text-indigo-600 hover:bg-indigo-50"
+              title="Kanala kullanıcı davet et"
+            >
+              <Users className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         {/* Mesaj Akışı */}
@@ -172,16 +230,26 @@ export default function ChatHub({
             </button>
           </div>
         </form>
-      </div>
+        </div>
+      </>
     );
   }
 
   // 2. Ana Sohbet Listesi (Ekran 5)
   return (
-    <div className="pb-24 pt-2 px-2 sm:px-4 w-full space-y-4">
+    <>
+      {chatModals}
+      <div className="pb-24 pt-2 px-2 sm:px-4 w-full space-y-4">
       {/* 1. Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold text-slate-800">Sohbet</h2>
+        <button
+          type="button"
+          onClick={() => setIsCreateChannelOpen(true)}
+          className="flex items-center gap-1 text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1.5 rounded-xl"
+        >
+          <Plus className="w-3.5 h-3.5" /> Kanal
+        </button>
         {onOpenArchive && (
           <button
             onClick={onOpenArchive}
@@ -329,6 +397,7 @@ export default function ChatHub({
             ))}
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }

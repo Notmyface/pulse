@@ -94,6 +94,15 @@ export default function CreateChannelModal({
               entity_type: "chat",
               entity_id: channelData.id
             });
+            const { data: { session } } = await supabase.auth.getSession();
+            await fetch("/api/notifications/send", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
+              },
+              body: JSON.stringify({ userId: targetUserId, title: "Yeni kanala eklediniz", body: `"#${channelData.name}" özel kanalına eklediniz.`, url: "/" })
+            });
           } catch {
             // Sessizce yut
           }

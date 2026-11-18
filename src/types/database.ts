@@ -8,6 +8,7 @@ export interface Profile {
   id: string;
   email: string;
   full_name: string;
+  username?: string;
   avatar_url?: string;
   role: UserRole;
   user_emoji?: string;
@@ -127,10 +128,11 @@ export interface Channel {
 }
 
 export interface ChannelMember {
-  id: string;
+  id?: string;
   channel_id: string;
   user_id: string;
-  joined_at: string;
+  role?: 'owner' | 'admin' | 'member';
+  joined_at?: string;
 }
 
 export interface ListModulePermission {

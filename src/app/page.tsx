@@ -93,7 +93,7 @@ export default function MobileDashboard() {
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [newProjectInput, setNewProjectInput] = useState("");
 
-  const [teamMembers, setTeamMembers] = useState<Array<{ id: string; name: string; role: string }>>([]);
+  const [teamMembers, setTeamMembers] = useState<Array<{ id: string; name: string; username?: string; role: string }>>([]);
   const [projectMemberships, setProjectMemberships] = useState<Array<{ project_id: string; user_id: string; is_manager: boolean }>>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -404,10 +404,11 @@ export default function MobileDashboard() {
         return {
           id: profile.id,
           name: profile.id === currentUser?.id ? `${profile.full_name || "Ben"} (Kendim)` : (profile.full_name || profile.email),
+          username: profile.username,
           role: member.is_manager ? "Proje Yöneticisi" : "Üye"
         };
       })
-      .filter((member): member is { id: string; name: string; role: string } => member !== null);
+      .filter((member): member is { id: string; name: string; username: string | undefined; role: string } => member !== null);
     setTeamMembers(members);
     const firstOtherMember = members.find(member => member.id !== currentUser?.id);
     setActiveDmUser(firstOtherMember?.id || "");
@@ -439,7 +440,8 @@ export default function MobileDashboard() {
           password: authPassword,
           options: {
             data: {
-              full_name: authFullName.trim()
+              full_name: authFullName.trim(),
+              username: authEmail.trim().split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "")
             }
           }
         });
@@ -1102,7 +1104,7 @@ export default function MobileDashboard() {
     }
   };
 
-  const handleChatHubSend = async (params: { content: string; channel_id?: string; project_id?: string; recipient_id?: string }) => {
+  const handleChatHubSend = async (params: { content: string; channel_id?: string; project_id?: string; recipient_id?: string; mentions?: string[] }) => {
     if (!currentUser) return;
     const { data, error } = await supabase.from("chat_messages").insert({
       channel_id: params.channel_id || null,
@@ -1110,13 +1112,27 @@ export default function MobileDashboard() {
       sender_id: currentUser.id,
       recipient_id: params.recipient_id || null,
       content: params.content,
-      mentions: [],
+      mentions: params.mentions || [],
       is_direct_message: Boolean(params.recipient_id)
     }).select("*").single();
 
     if (error) throw error;
     if (data) {
       setMessages(prev => prev.some(message => message.id === data.id) ? prev : [...prev, data as ExtendedMessage]);
+      for (const mentionedUserId of params.mentions || []) {
+        if (mentionedUserId === currentUser.id) continue;
+        await supabase.from("notifications").insert({
+          user_id: mentionedUserId,
+          actor_id: currentUser.id,
+          type: "mention",
+          title: "Mesajda mention alındı",
+          message: `${currentUser.full_name}: ${params.content}`,
+          entity_type: "chat",
+          entity_id: data.id,
+          is_read: false
+        });
+        void sendPushNotification(mentionedUserId, "Mesajda mention alındınız", `${currentUser.full_name}: ${params.content}`);
+      }
       if (params.recipient_id) {
         void sendPushNotification(params.recipient_id, `${currentUser.full_name} kişisinden yeni mesaj`, params.content);
       } else {
@@ -1133,7 +1149,9 @@ export default function MobileDashboard() {
     if ((!newMessageText.trim() && !pendingAttachment) || !currentUser) return;
 
     const isDm = chatMode === "dm";
-    const mentionedMembers = teamMembers.filter(m => newMessageText.includes(`@${m.name}`));
+    const mentionedMembers = teamMembers.filter(member =>
+      newMessageText.includes(`@${member.username || member.name.toLowerCase().replace(/[^a-z0-9]/g, "")}`)
+    );
 
     try {
       const { data } = await supabase.from("chat_messages").insert({
@@ -1175,10 +1193,10 @@ export default function MobileDashboard() {
     }
   };
 
-  const handleSelectMention = (member: { id: string; name: string }) => {
+  const handleSelectMention = (member: { id: string; name: string; username?: string }) => {
     const atIndex = newMessageText.lastIndexOf("@");
     const prefix = atIndex >= 0 ? newMessageText.slice(0, atIndex) : newMessageText;
-    setNewMessageText(`${prefix}@${member.name} `);
+    setNewMessageText(`${prefix}@${member.username || member.name.toLowerCase().replace(/[^a-z0-9]/g, "")} `);
     setIsMentionOpen(false);
   };
 
@@ -1875,7 +1893,9 @@ export default function MobileDashboard() {
               created_at: ""
             })) as Project[]}
             channels={channels}
+            setChannels={setChannels}
             channelMembers={channelMembers}
+            setChannelMembers={setChannelMembers}
             messages={messages}
             onSendMessage={handleChatHubSend}
           />

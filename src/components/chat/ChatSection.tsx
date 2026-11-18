@@ -102,10 +102,11 @@ export default function ChatSection({
     : [];
 
   // Mention için liste
-  const mentionEligibleMembers = profiles.map(p => ({
-    id: p.id,
-    name: p.full_name || p.email.split("@")[0],
-    role: p.role || "Üye"
+  const mentionEligibleMembers = profiles.map(profile => ({
+    id: profile.id,
+    name: profile.full_name || profile.email.split("@")[0],
+    username: profile.username,
+    role: profile.role === "admin" ? "Genel Yönetici" : profile.role === "manager" ? "Liste Yöneticisi" : "Üye"
   }));
 
   // Mesaj listesini filtrele
@@ -209,8 +210,8 @@ export default function ChatSection({
     const recipientId = activeDmUser ? activeDmUser.id : null;
 
     const mentionedUserIds = profiles
-      .filter(p => newMessageText.includes(`@${p.full_name || p.email.split("@")[0]}`))
-      .map(p => p.id);
+      .filter(profile => newMessageText.includes(`@${profile.username || profile.email.split("@")[0].toLowerCase()}`))
+      .map(profile => profile.id);
 
     try {
       const payload: any = {
@@ -265,6 +266,9 @@ export default function ChatSection({
             newMessageText.trim() || "📎 Bir dosya gönderdi"
           );
         } else if (activeChannel) {
+          mentionedUserIds.forEach(userId => {
+            void sendPushNotification(userId, `${currentUser.full_name} seni etiketledi`, newMessageText.trim() || "Bir mesajda mention aldın");
+          });
           // Kanaldaki diğer üyelere push bildirimi
           const targetUsers = activeChannelMemberIds.filter(id => id !== currentUser.id);
           targetUsers.slice(0, 10).forEach(uid => {
@@ -286,10 +290,10 @@ export default function ChatSection({
     }
   };
 
-  const handleSelectMention = (member: { id: string; name: string }) => {
+  const handleSelectMention = (member: { id: string; name: string; username?: string }) => {
     const atIndex = newMessageText.lastIndexOf("@");
     const prefix = atIndex >= 0 ? newMessageText.slice(0, atIndex) : newMessageText;
-    setNewMessageText(`${prefix}@${member.name} `);
+    setNewMessageText(`${prefix}@${member.username || member.name.toLowerCase().replace(/[^a-z0-9]/g, "")} `);
     setIsMentionOpen(false);
   };
 

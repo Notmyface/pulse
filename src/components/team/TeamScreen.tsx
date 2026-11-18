@@ -125,7 +125,7 @@ export default function TeamScreen({
                       )}
                     </div>
                     <span className="text-[11px] text-slate-400 font-medium truncate block">
-                      {member.email}
+                      @{member.username || member.email.split("@")[0].toLowerCase()} · {member.email}
                     </span>
                   </div>
                 </div>
