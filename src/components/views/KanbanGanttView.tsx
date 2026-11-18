@@ -13,7 +13,7 @@ import {
   Users,
   Edit3,
 } from "lucide-react";
-import type { Task, Project, Profile } from "@/types/database";
+import type { Task, Project, Profile, TaskDependency } from "@/types/database";
 import { exportGanttToPdf } from "./GanttPdfExport";
 import { createDoubleTapHandler } from "@/lib/gestures";
 
@@ -23,6 +23,7 @@ interface KanbanGanttViewProps {
   onEditTask: (task: Task) => void;
   onOpenCreateTask: (defaultStatus?: "todo" | "in_progress" | "done") => void;
   onUpdateTaskStatus: (taskId: string, status: "todo" | "in_progress" | "done") => Promise<void>;
+  dependencies?: TaskDependency[];
 }
 
 export default function KanbanGanttView({
@@ -31,6 +32,7 @@ export default function KanbanGanttView({
   onEditTask,
   onOpenCreateTask,
   onUpdateTaskStatus,
+  dependencies = [],
 }: KanbanGanttViewProps) {
   const [viewMode, setViewMode] = useState<"kanban" | "gantt">("kanban");
   const [selectedGanttTask, setSelectedGanttTask] = useState<Task | null>(null);
@@ -171,6 +173,13 @@ export default function KanbanGanttView({
 
       {/* 2. GANTT GÖRÜNÜMÜ (Ekran 10 Detayı) */}
       {viewMode === "gantt" && (
+        <div className="bg-indigo-50/70 border border-indigo-200/70 rounded-2xl p-3 space-y-1.5">
+          <p className="text-xs font-bold text-indigo-800">Gantt nasıl kullanılır?</p>
+          <p className="text-[11px] text-indigo-700 leading-relaxed">Görev kartına tek dokunuşla ayrıntıları seç, çift dokunuşla veya Düzenle butonuyla tarih/öncül görev ayarla. İki görevi bağlamak için düzenlemede “Öncül Görevler” bölümünü kullan.</p>
+          <p className="text-[10px] text-slate-500">Öncül görevün tarihi ertelenirse bağlı görevlerin tarihi aynı gün farkıyla kaydırılır.</p>
+        </div>
+      )}
+      {viewMode === "gantt" && (
         <div className="space-y-4">
           <div className="bg-white rounded-2xl border border-slate-200 p-3 shadow-xs overflow-x-auto">
             {/* Tarih Başlıkları */}
@@ -192,6 +201,11 @@ export default function KanbanGanttView({
             <div className="space-y-2.5 min-w-[500px]">
               {tasks.map((task) => {
                 const isSelected = selectedGanttTask?.id === task.id;
+                const startDate = task.start_date ? new Date(task.start_date) : new Date(task.created_at);
+                const endDate = task.due_date ? new Date(task.due_date) : startDate;
+                const startOffset = Math.max(0, Math.round((startDate.getTime() - timelineDates[0].getTime()) / 86400000));
+                const duration = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 86400000) + 1);
+                const incomingDependencies = dependencies.filter(dependency => dependency.task_id === task.id);
 
                 // Çift Dokunuş -> Düzenleme ekranı açar
                 const handleTap = createDoubleTapHandler(
@@ -214,12 +228,14 @@ export default function KanbanGanttView({
                     <div className="flex-1 relative h-6 bg-slate-50 rounded-lg flex items-center px-1">
                       {/* Simüle Edilen Görev Çubuğu */}
                       <div
-                        className="h-4 rounded-md shadow-xs opacity-90 transition-all flex items-center px-2 text-[9px] font-bold text-white truncate"
+                        className="relative h-4 rounded-md shadow-xs opacity-90 transition-all flex items-center px-2 text-[9px] font-bold text-white truncate"
                         style={{
                           backgroundColor: task.task_color || "#6366f1",
-                          width: task.due_date ? "65%" : "30%",
+                          width: `${Math.min(14, duration) * (100 / 14)}%`,
+                          marginLeft: `${Math.min(13, startOffset) * (100 / 14)}%`,
                         }}
                       >
+                        {incomingDependencies.length > 0 && <span className="absolute -left-2 w-2 h-2 rounded-full bg-slate-900 border border-white" />}
                         {task.title}
                       </div>
                     </div>

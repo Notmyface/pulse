@@ -17,7 +17,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
-import type { Task, Profile, Project, Category, TaskPriority, TaskComment } from "@/types/database";
+import type { Task, Profile, Project, Category, TaskPriority, TaskComment, TaskDependency } from "@/types/database";
 
 interface TaskEditModalProps {
   isOpen: boolean;
@@ -32,6 +32,11 @@ interface TaskEditModalProps {
   comments?: TaskComment[];
   onAddComment?: (taskId: string, content: string) => Promise<void>;
   onCreateProject?: (proj: { name: string; category_id: string }) => Promise<string | undefined>;
+  dependencies?: TaskDependency[];
+  projectTasks?: Task[];
+  canManageDependencies?: boolean;
+  onAddDependency?: (taskId: string, dependsOnTaskId: string) => Promise<void>;
+  onRemoveDependency?: (dependencyId: string) => Promise<void>;
 }
 
 const COLOR_PALETTE = [
@@ -58,6 +63,11 @@ export default function TaskEditModal({
   comments = [],
   onAddComment,
   onCreateProject,
+  dependencies = [],
+  projectTasks = [],
+  canManageDependencies = false,
+  onAddDependency,
+  onRemoveDependency,
 }: TaskEditModalProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -75,6 +85,7 @@ export default function TaskEditModal({
   const [quickProjName, setQuickProjName] = useState("");
   const [quickProjCatId, setQuickProjCatId] = useState("");
   const [isCreatingQuickProj, setIsCreatingQuickProj] = useState(false);
+  const [dependencyCandidate, setDependencyCandidate] = useState("");
 
   useEffect(() => {
     if (task) {
@@ -99,6 +110,13 @@ export default function TaskEditModal({
   }, [task, currentUserId]);
 
   if (!isOpen) return null;
+
+  const taskDependencies = task
+    ? dependencies.filter(dependency => dependency.task_id === task.id)
+    : [];
+  const tasksForDependency = task
+    ? projectTasks.filter(projectTask => projectTask.id !== task.id && !taskDependencies.some(dependency => dependency.depends_on_task_id === projectTask.id))
+    : [];
 
   const toggleAssignee = (profileId: string) => {
     setSelectedAssigneeIds((prev) =>
@@ -413,6 +431,60 @@ export default function TaskEditModal({
               ))}
             </div>
           </div>
+
+          {/* Gantt Bağımlılıkları */}
+          {task && canManageDependencies && (
+            <div className="pt-2 border-t border-slate-100 space-y-2">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600">Öncül Görevler</label>
+                <p className="text-[10px] text-slate-400 mt-0.5">Bu iş, seçilen öncül işlerden sonra başlamalıdır.</p>
+              </div>
+
+              <div className="flex gap-2">
+                <select
+                  value={dependencyCandidate}
+                  onChange={(event) => setDependencyCandidate(event.target.value)}
+                  className="min-w-0 flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none"
+                >
+                  <option value="">Öncül görev seç</option>
+                  {tasksForDependency.map((projectTask) => (
+                    <option key={projectTask.id} value={projectTask.id}>{projectTask.title}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={!dependencyCandidate || !onAddDependency}
+                  onClick={async () => {
+                    await onAddDependency?.(task.id, dependencyCandidate);
+                    setDependencyCandidate("");
+                  }}
+                  className="px-3 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold disabled:opacity-40"
+                >
+                  Bağla
+                </button>
+              </div>
+
+              {taskDependencies.length > 0 && (
+                <div className="space-y-1.5">
+                  {taskDependencies.map((dependency) => {
+                    const sourceTask = tasksForDependency.find(projectTask => projectTask.id === dependency.depends_on_task_id);
+                    return (
+                      <div key={dependency.id} className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl">
+                        <span className="text-[11px] text-slate-600 truncate">Önce: {sourceTask?.title || "Görev"}</span>
+                        <button
+                          type="button"
+                          onClick={() => onRemoveDependency?.(dependency.id)}
+                          className="text-[10px] font-semibold text-rose-500 hover:text-rose-600 shrink-0"
+                        >
+                          Kaldır
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Yorumlar (Yalnızca mevcut görevler için) */}
           {task && (

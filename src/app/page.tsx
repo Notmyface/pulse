@@ -1632,6 +1632,7 @@ export default function MobileDashboard() {
                   setIsCreateModalOpen(true);
                 }}
                 onUpdateTaskStatus={updateTaskStatus}
+                dependencies={taskDependencies.filter(dependency => dependency.project_id === activeProjectId)}
               />
             ) : (
               <div className="space-y-2.5">
@@ -2054,6 +2055,11 @@ export default function MobileDashboard() {
         currentUserId={currentUser.id}
         comments={editingTask ? taskComments[editingTask.id] || [] : []}
         onAddComment={handleAddTaskComment}
+        projectTasks={tasks.filter(task => task.project_id === activeProjectId && !task.archived_at)}
+        dependencies={taskDependencies.filter(dependency => dependency.project_id === activeProjectId)}
+        canManageDependencies={Boolean(activeProject?.is_manager)}
+        onAddDependency={handleAddDependency}
+        onRemoveDependency={handleRemoveDependency}
       />
 
     </div>
