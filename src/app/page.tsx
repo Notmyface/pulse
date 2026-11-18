@@ -48,6 +48,8 @@ import PersonalHomeScreen from "@/components/personal/PersonalHomeScreen";
 import TaskEditModal from "@/components/tasks/TaskEditModal";
 import GeneralCalendar from "@/components/calendar/GeneralCalendar";
 import MobileBottomNav, { type TabType } from "@/components/navigation/MobileBottomNav";
+import TeamScreen from "@/components/team/TeamScreen";
+import type { UserRole } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
 
 export default function MobileDashboard() {
@@ -565,6 +567,52 @@ export default function MobileDashboard() {
     }
     setInviteStatus("Davet bağlantısı hazırlandı.");
     setInviteEmail("");
+  };
+
+  const handleUpdateProfileRole = async (memberId: string, role: UserRole) => {
+    const { error: profileError } = await supabase.from("profiles").update({ role }).eq("id", memberId);
+    if (profileError) throw profileError;
+
+    if (activeProjectId) {
+      const { error: membershipError } = await supabase.from("project_members")
+        .update({ is_manager: role === "admin" || role === "manager" })
+        .eq("project_id", activeProjectId)
+        .eq("user_id", memberId);
+      if (membershipError) throw membershipError;
+    }
+
+    setProfiles(prev => prev.map(profile => profile.id === memberId ? { ...profile, role } : profile));
+    setProjectMemberships(prev => prev.map(member =>
+      member.project_id === activeProjectId && member.user_id === memberId
+        ? { ...member, is_manager: role === "admin" || role === "manager" }
+        : member
+    ));
+  };
+
+  const handleTeamInvite = async (email: string, fullName: string, role: UserRole) => {
+    if (!activeProjectId || !currentUser) return;
+    const normalizedEmail = email.trim().toLowerCase();
+    const { data: profile } = await supabase.from("profiles").select("id").eq("email", normalizedEmail).maybeSingle();
+
+    if (profile) {
+      const { error } = await supabase.from("project_members").upsert({
+        project_id: activeProjectId,
+        user_id: profile.id,
+        is_manager: role === "admin" || role === "manager"
+      }, { onConflict: "project_id,user_id" });
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from("project_invites").insert({
+        project_id: activeProjectId,
+        email: normalizedEmail,
+        invited_by: currentUser.id,
+        role: role === "member" ? "member" : "manager"
+      });
+      if (error) throw error;
+    }
+
+    const { data: membershipData } = await supabase.from("project_members").select("project_id, user_id, is_manager");
+    setProjectMemberships((membershipData || []) as Array<{ project_id: string; user_id: string; is_manager: boolean }>);
   };
 
   const handleToggleManager = async (memberId: string, isManager: boolean) => {
@@ -1754,88 +1802,18 @@ export default function MobileDashboard() {
 
         {/* --- TAB: EKİP (TEAM) --- */}
         {activeTab === "team" && (
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                Kayıtlı Ekip ({teamMembers.length} Kişi)
-              </h2>
-            </div>
-
-            {activeProject?.is_manager && (
-              <div className="p-3 bg-slate-900 border border-indigo-500/30 rounded-xl space-y-2">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-                  <UserPlus size={14} className="text-indigo-400" /> Projeye davet et
-                </div>
-                <div className="flex gap-1.5">
-                  <input
-                    type="email"
-                    value={inviteEmail}
-                    onChange={(event) => setInviteEmail(event.target.value)}
-                    placeholder="E-posta adresi"
-                    className="min-w-0 flex-1 bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                  />
-                  <select
-                    value={inviteRole}
-                    onChange={(event) => setInviteRole(event.target.value as "member" | "manager")}
-                    className="bg-slate-800 border border-slate-700 rounded-lg px-2 text-[11px] text-slate-200 focus:outline-none"
-                    aria-label="Davet rolü"
-                  >
-                    <option value="member">Üye</option>
-                    <option value="manager">Yönetici</option>
-                  </select>
-                  <button
-                    onClick={handleInviteMember}
-                    disabled={!inviteEmail.trim()}
-                    className="p-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-lg transition"
-                    title="Davet gönder"
-                  >
-                    <Share2 size={15} />
-                  </button>
-                </div>
-                <p className="text-[10px] text-slate-400">Kayıtlı kullanıcı doğrudan eklenir; kayıtlı değilse WhatsApp veya paylaşım bağlantısı açılır.</p>
-                {inviteStatus && <p className="text-[10px] text-emerald-400">{inviteStatus}</p>}
-              </div>
-            )}
-
-            <div className="space-y-2">
-              {teamMembers.map((member) => (
-                <div key={member.id} className="p-3 bg-slate-900 border border-slate-800 rounded-xl flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-xs text-indigo-400">
-                      {member.name.charAt(0)}
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-slate-200">{member.name}</p>
-                      <p className="text-[10px] text-slate-400">{member.role}</p>
-                    </div>
-                  </div>
-                  {member.id !== currentUser.id && (
-                    <div className="flex items-center gap-2">
-                      {activeProject?.is_manager && (
-                        <button
-                          onClick={() => handleToggleManager(member.id, member.role === "Proje Yöneticisi")}
-                          className="text-[10px] text-slate-400 hover:text-indigo-300 transition"
-                          title="Proje yöneticisi yetkisini değiştir"
-                        >
-                          {member.role === "Proje Yöneticisi" ? "Yetkiyi kaldır" : "Yönetici yap"}
-                        </button>
-                      )}
-                      <button
-                        onClick={() => {
-                          setActiveDmUser(member.id);
-                          setChatMode("dm");
-                          setActiveTab("chat");
-                        }}
-                        className="text-[11px] px-2.5 py-1 rounded-lg bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600 hover:text-white transition"
-                      >
-                        Özel DM
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
+          <TeamScreen
+            profiles={profiles}
+            currentUser={profiles.find(profile => profile.id === currentUser.id) || {
+              id: currentUser.id,
+              email: currentUser.email,
+              full_name: currentUser.full_name,
+              role: activeProject?.is_manager ? "admin" : "member",
+              created_at: ""
+            }}
+            onUpdateRole={handleUpdateProfileRole}
+            onInviteMember={handleTeamInvite}
+          />
         )}
       </main>
 
