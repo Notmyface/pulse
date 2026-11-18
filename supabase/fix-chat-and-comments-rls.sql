@@ -13,6 +13,9 @@ DROP POLICY IF EXISTS "Task comments readable by project members" ON public.task
 DROP POLICY IF EXISTS "Task comments insertable by project members" ON public.task_comments;
 DROP POLICY IF EXISTS "Task comments readable by managers or assignee" ON public.task_comments;
 DROP POLICY IF EXISTS "Task comments insertable by managers or assignee" ON public.task_comments;
+DROP POLICY IF EXISTS "Task comments insertable by author" ON public.task_comments;
+DROP POLICY IF EXISTS "Task comments deletable by author or admin" ON public.task_comments;
+DROP POLICY IF EXISTS "Task comments readable by authenticated" ON public.task_comments;
 
 -- Yalnızca görevin yöneticisi veya atanmış kişisi yorumları görebilir
 CREATE POLICY "Task comments readable by managers or assignee" ON public.task_comments
@@ -58,6 +61,8 @@ CREATE POLICY "Task comments deletable by author or admin" ON public.task_commen
 ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
 
 -- Eski kısıtlayıcı politikaları kaldır
+DROP POLICY IF EXISTS "Chat messages accessible by participants" ON public.chat_messages;
+DROP POLICY IF EXISTS "Chat messages insertable by sender" ON public.chat_messages;
 DROP POLICY IF EXISTS "Chat messages accessible by participants" ON public.chat_messages;
 DROP POLICY IF EXISTS "Chat messages insertable by sender" ON public.chat_messages;
 

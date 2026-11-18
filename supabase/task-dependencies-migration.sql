@@ -20,22 +20,15 @@ CREATE INDEX IF NOT EXISTS task_deps_project_id_idx ON public.task_dependencies 
 ALTER TABLE public.task_dependencies ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Task dependencies readable by project members" ON public.task_dependencies;
+DROP POLICY IF EXISTS "Task dependencies insertable by project members" ON public.task_dependencies;
+DROP POLICY IF EXISTS "Task dependencies deletable by project members" ON public.task_dependencies;
+DROP POLICY IF EXISTS "Task dependencies insertable by project managers" ON public.task_dependencies;
+DROP POLICY IF EXISTS "Task dependencies deletable by project managers" ON public.task_dependencies;
+
 CREATE POLICY "Task dependencies readable by project members" ON public.task_dependencies
     FOR SELECT TO authenticated
     USING (public.is_project_member(project_id));
 
-DROP POLICY IF EXISTS "Task dependencies insertable by project members" ON public.task_dependencies;
-CREATE POLICY "Task dependencies insertable by project managers" ON public.task_dependencies
-    FOR INSERT TO authenticated
-    WITH CHECK (public.is_project_manager(project_id));
-
-DROP POLICY IF EXISTS "Task dependencies deletable by project members" ON public.task_dependencies;
-CREATE POLICY "Task dependencies deletable by project managers" ON public.task_dependencies
-    FOR DELETE TO authenticated
-    USING (public.is_project_manager(project_id));
-
-DROP POLICY IF EXISTS "Task dependencies insertable by project managers" ON public.task_dependencies;
-DROP POLICY IF EXISTS "Task dependencies deletable by project managers" ON public.task_dependencies;
 CREATE POLICY "Task dependencies insertable by project managers" ON public.task_dependencies
     FOR INSERT TO authenticated
     WITH CHECK (public.is_project_manager(project_id));

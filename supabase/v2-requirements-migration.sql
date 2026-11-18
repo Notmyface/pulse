@@ -16,20 +16,40 @@ CREATE TABLE IF NOT EXISTS public.categories (
 -- Kategori RLS
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Herkes aktif kategorileri görebilir" ON public.categories;
+DROP POLICY IF EXISTS "Kategoriler giriş yapmış kullanıcılar tarafından okunabilir" ON public.categories;
 CREATE POLICY "Herkes aktif kategorileri görebilir"
     ON public.categories FOR SELECT
     TO authenticated
-    USING (TRUE);
+    USING (is_archived IS FALSE);
 
+DROP POLICY IF EXISTS "Kullanıcılar kategori oluşturabilir" ON public.categories;
 CREATE POLICY "Kullanıcılar kategori oluşturabilir"
     ON public.categories FOR INSERT
     TO authenticated
-    WITH CHECK (TRUE);
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.profiles
+            WHERE id = auth.uid() AND role = 'admin'
+        )
+    );
 
+DROP POLICY IF EXISTS "Kullanıcılar kategorileri güncelleyebilir" ON public.categories;
 CREATE POLICY "Kullanıcılar kategorileri güncelleyebilir"
     ON public.categories FOR UPDATE
     TO authenticated
-    USING (TRUE);
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.profiles
+            WHERE id = auth.uid() AND role = 'admin'
+        )
+    )
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.profiles
+            WHERE id = auth.uid() AND role = 'admin'
+        )
+    );
 
 -- Varsayılan örnek kategoriler (Dokümanda geçenler)
 INSERT INTO public.categories (name, color, icon, order_index)
@@ -76,20 +96,46 @@ ON CONFLICT (task_id, user_id) DO NOTHING;
 -- Task Assignees RLS
 ALTER TABLE public.task_assignees ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Görev sorumlularını yetkili kullanıcılar görebilir" ON public.task_assignees;
+DROP POLICY IF EXISTS "Görev sorumlusu ekleme yetkisi" ON public.task_assignees;
+DROP POLICY IF EXISTS "Görev sorumlusu silme yetkisi" ON public.task_assignees;
+
 CREATE POLICY "Görev sorumlularını yetkili kullanıcılar görebilir"
     ON public.task_assignees FOR SELECT
     TO authenticated
-    USING (TRUE);
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.tasks
+            WHERE tasks.id = task_assignees.task_id
+              AND (
+                  public.is_project_manager(tasks.project_id)
+                  OR tasks.assigned_to = auth.uid()
+                  OR task_assignees.user_id = auth.uid()
+              )
+        )
+    );
 
 CREATE POLICY "Görev sorumlusu ekleme yetkisi"
     ON public.task_assignees FOR INSERT
     TO authenticated
-    WITH CHECK (TRUE);
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.tasks
+            WHERE tasks.id = task_assignees.task_id
+              AND public.is_project_manager(tasks.project_id)
+        )
+    );
 
 CREATE POLICY "Görev sorumlusu silme yetkisi"
     ON public.task_assignees FOR DELETE
     TO authenticated
-    USING (TRUE);
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.tasks
+            WHERE tasks.id = task_assignees.task_id
+              AND public.is_project_manager(tasks.project_id)
+        )
+    );
 
 -- 5. PROFİLLER GENİŞLETME (Takvim rengi, emojisi ve aktiflik durumu)
 ALTER TABLE public.profiles
@@ -114,10 +160,25 @@ CREATE TABLE IF NOT EXISTS public.list_module_permissions (
 
 ALTER TABLE public.list_module_permissions ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Modül izinlerini yetkili kullanıcılar görebilir" ON public.list_module_permissions;
+DROP POLICY IF EXISTS "Modül izinlerini yöneticiler düzenleyebilir" ON public.list_module_permissions;
+
 CREATE POLICY "Modül izinlerini yetkili kullanıcılar görebilir"
     ON public.list_module_permissions FOR SELECT
     TO authenticated
-    USING (TRUE);
+    USING (
+        user_id = auth.uid()
+        OR EXISTS (
+            SELECT 1 FROM public.profiles
+            WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
+        )
+        OR EXISTS (
+            SELECT 1 FROM public.project_members
+            WHERE project_members.project_id = list_module_permissions.project_id
+              AND project_members.user_id = auth.uid()
+              AND project_members.is_manager = TRUE
+        )
+    );
 
 CREATE POLICY "Modül izinlerini yöneticiler düzenleyebilir"
     ON public.list_module_permissions FOR ALL
@@ -152,6 +213,9 @@ CREATE TABLE IF NOT EXISTS public.calendar_permissions (
 );
 
 ALTER TABLE public.calendar_permissions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Takvim izinlerini taraflar ve yöneticiler görebilir" ON public.calendar_permissions;
+DROP POLICY IF EXISTS "Takvim izinlerini admin veya kullanıcı yönetebilir" ON public.calendar_permissions;
 
 CREATE POLICY "Takvim izinlerini taraflar ve yöneticiler görebilir"
     ON public.calendar_permissions FOR SELECT
