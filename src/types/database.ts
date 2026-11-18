@@ -10,6 +10,9 @@ export interface Profile {
   full_name: string;
   avatar_url?: string;
   role: UserRole;
+  user_emoji?: string;
+  user_color?: string;
+  is_active?: boolean;
   created_at: string;
 }
 
@@ -19,7 +22,26 @@ export interface Project {
   description?: string;
   color_code: string;
   created_by?: string;
+  category_id?: string;
+  module_todo?: boolean;
+  module_docs?: boolean;
+  module_files?: boolean;
+  module_kanban?: boolean;
+  module_gantt?: boolean;
+  module_chat?: boolean;
+  documentation_content?: string;
+  category?: Category;
   is_archived: boolean;
+  created_at: string;
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  color?: string;
+  icon?: string;
+  order_index?: number;
+  is_archived?: boolean;
   created_at: string;
 }
 
@@ -32,7 +54,9 @@ export interface Task {
   priority: TaskPriority;
   created_by: string;
   assigned_to?: string;
+  start_date?: string;
   due_date?: string;
+  task_color?: string;
   completed_at?: string;
   completed_by?: string;
   archived_at?: string;
@@ -40,6 +64,7 @@ export interface Task {
   created_at: string;
   // Joins
   assigned_profile?: Profile;
+  assignees?: Profile[];
   project?: Project;
 }
 
@@ -106,6 +131,32 @@ export interface ChannelMember {
   channel_id: string;
   user_id: string;
   joined_at: string;
+}
+
+export interface ListModulePermission {
+  id: string;
+  project_id: string;
+  user_id: string;
+  can_todo: boolean;
+  can_docs: boolean;
+  can_files: boolean;
+  can_kanban: boolean;
+  can_gantt: boolean;
+  can_chat: boolean;
+  created_at: string;
+}
+
+export interface CalendarPermission {
+  id: string;
+  granter_user_id: string;
+  viewer_user_id: string;
+  show_title: boolean;
+  show_dates: boolean;
+  show_priority: boolean;
+  show_assignees: boolean;
+  show_description: boolean;
+  show_list_name: boolean;
+  created_at: string;
 }
 
 export interface NotificationItem {

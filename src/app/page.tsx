@@ -43,6 +43,10 @@ import PushNotificationToggle from "@/components/PushNotificationToggle";
 import InstallPrompt from "@/components/InstallPrompt";
 import PersonalTodoPanel from "@/components/PersonalTodoPanel";
 import ProjectTimelinePanel from "@/components/ProjectTimelinePanel";
+import PersonalHomeScreen from "@/components/personal/PersonalHomeScreen";
+import GeneralCalendar from "@/components/calendar/GeneralCalendar";
+import MobileBottomNav, { type TabType } from "@/components/navigation/MobileBottomNav";
+import type { Profile } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
 
 export default function MobileDashboard() {
@@ -70,7 +74,7 @@ export default function MobileDashboard() {
   const [recoverySuccess, setRecoverySuccess] = useState("");
 
   // Uygulama Navigasyon State'leri
-  const [activeTab, setActiveTab] = useState<"personal" | "tasks" | "chat" | "notifications" | "team">("tasks");
+  const [activeTab, setActiveTab] = useState<TabType | "notifications">("personal");
   const [viewMode, setViewMode] = useState<"list" | "kanban" | "timeline">("list");
   const [taskFilter, setTaskFilter] = useState<"all" | "assigned_to_me" | "urgent" | "archived">("all");
   
@@ -82,7 +86,7 @@ export default function MobileDashboard() {
 
   const [teamMembers, setTeamMembers] = useState<Array<{ id: string; name: string; role: string }>>([]);
   const [projectMemberships, setProjectMemberships] = useState<Array<{ project_id: string; user_id: string; is_manager: boolean }>>([]);
-  const [profiles, setProfiles] = useState<Array<{ id: string; email: string; full_name: string; role: string }>>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskDependencies, setTaskDependencies] = useState<TaskDependency[]>([]);
   const [taskComments, setTaskComments] = useState<Record<string, TaskComment[]>>({});
@@ -218,11 +222,11 @@ export default function MobileDashboard() {
 
       // 2. Yalnızca erişilebilen projelerin üyelerini ve profillerini çek
       const { data: membershipData } = await supabase.from("project_members").select("project_id, user_id, is_manager");
-      const { data: profData } = await supabase.from("profiles").select("id, email, full_name, role");
+      const { data: profData } = await supabase.from("profiles").select("*");
       setProjectMemberships((membershipData || []) as Array<{ project_id: string; user_id: string; is_manager: boolean }>);
-      setProfiles((profData || []) as Array<{ id: string; email: string; full_name: string; role: string }>);
+      const loadedProfiles = (profData || []) as Profile[];
+      setProfiles(loadedProfiles);
 
-      const loadedProfiles = (profData || []) as Array<{ id: string; email: string; full_name: string; role: string }>;
       const { data: commentData } = await supabase.from("task_comments").select("*").order("created_at", { ascending: true });
       const commentsByTask = (commentData || []).reduce<Record<string, TaskComment[]>>((grouped, comment: TaskComment) => {
         const author = loadedProfiles.find(profile => profile.id === comment.user_id);
@@ -1254,15 +1258,35 @@ export default function MobileDashboard() {
       <main className="flex-1 overflow-y-auto px-4 py-3 pb-24">
         <InstallPrompt />
 
-        {/* --- TAB: KİŞİSEL TODO --- */}
+        {/* --- TAB: ANA SAYFA --- */}
         {activeTab === "personal" && (
-          <PersonalTodoPanel
-            todos={personalTodos}
-            onCreate={handleCreatePersonalTodo}
-            onEdit={handleEditPersonalTodo}
-            onToggle={handleTogglePersonalTodo}
-            onDelete={handleDeletePersonalTodo}
-            onPostpone={handlePostponePersonalTodo}
+          <PersonalHomeScreen
+            currentUser={profiles.find(profile => profile.id === currentUser.id) || {
+              id: currentUser.id,
+              email: currentUser.email,
+              full_name: currentUser.full_name,
+              role: "member",
+              created_at: ""
+            }}
+            tasks={tasks}
+            onOpenCreateTask={() => setIsCreateModalOpen(true)}
+            onEditTask={(task) => setSelectedTask(task)}
+            onToggleCompleteTask={async (task) => { await toggleTaskStatus(task.id); }}
+            onOpenNotifications={() => setActiveTab("notifications")}
+            unreadNotificationCount={unreadCount}
+          />
+        )}
+
+        {/* --- TAB: TAKVİM --- */}
+        {activeTab === "calendar" && (
+          <GeneralCalendar
+            tasks={tasks.filter(task => !task.archived_at)}
+            profiles={profiles}
+            currentUserId={currentUser.id}
+            onSelectTask={(task) => setSelectedTask(task)}
+            onOpenCreateTask={(defaultDate) => {
+              setIsCreateModalOpen(true);
+            }}
           />
         )}
 
@@ -1720,50 +1744,11 @@ export default function MobileDashboard() {
       </main>
 
       {/* 3. MOBİL ALT NAVİGASYON */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-slate-900/95 backdrop-blur-lg border-t border-slate-800/80 px-3 py-2.5 pb-safe-bottom flex justify-between items-center z-40">
-        <button
-          onClick={() => setActiveTab("personal")}
-          className={`flex flex-col items-center gap-1 transition ${activeTab === "personal" ? "text-indigo-400 font-semibold" : "text-slate-400 hover:text-slate-300"}`}
-        >
-          <ListTodo size={20} />
-          <span className="text-[10px]">Kişisel</span>
-        </button>
-
-        <button 
-          onClick={() => setActiveTab("tasks")}
-          className={`flex flex-col items-center gap-1 transition ${activeTab === "tasks" ? "text-indigo-400 font-semibold" : "text-slate-400 hover:text-slate-300"}`}
-        >
-          <CheckSquare size={20} />
-          <span className="text-[10px]">Görevler</span>
-        </button>
-
-        <button 
-          onClick={() => setActiveTab("chat")}
-          className={`flex flex-col items-center gap-1 transition ${activeTab === "chat" ? "text-indigo-400 font-semibold" : "text-slate-400 hover:text-slate-300"}`}
-        >
-          <MessageSquare size={20} />
-          <span className="text-[10px]">Sohbet</span>
-        </button>
-
-        <button 
-          onClick={() => setActiveTab("notifications")}
-          className={`flex flex-col items-center gap-1 transition relative ${activeTab === "notifications" ? "text-indigo-400 font-semibold" : "text-slate-400 hover:text-slate-300"}`}
-        >
-          <Bell size={20} />
-          <span className="text-[10px]">Bildirim</span>
-          {unreadCount > 0 && (
-            <span className="w-2 h-2 rounded-full bg-indigo-500 absolute top-0 right-1"></span>
-          )}
-        </button>
-
-        <button 
-          onClick={() => setActiveTab("team")}
-          className={`flex flex-col items-center gap-1 transition ${activeTab === "team" ? "text-indigo-400 font-semibold" : "text-slate-400 hover:text-slate-300"}`}
-        >
-          <Users size={20} />
-          <span className="text-[10px]">Ekip</span>
-        </button>
-      </nav>
+      <MobileBottomNav
+        activeTab={activeTab === "notifications" ? "personal" : activeTab}
+        onChangeTab={(tab) => setActiveTab(tab)}
+        unreadChatCount={0}
+      />
 
       {/* 4. MODALLAR */}
       <TaskDetailModal 
