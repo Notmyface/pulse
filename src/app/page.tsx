@@ -33,7 +33,7 @@ import {
   CalendarRange
 } from "lucide-react";
 import { formatTimeAgo } from "@/lib/utils";
-import type { PersonalTodo, Task, TaskComment, TaskDependency, ChatMessage, NotificationItem, TaskPriority, Category, Profile } from "@/types/database";
+import type { PersonalTodo, Task, TaskComment, TaskDependency, ChatMessage, NotificationItem, TaskPriority, Category, Profile, Channel, Project } from "@/types/database";
 import TaskDetailModal from "@/components/TaskDetailModal";
 import CreateTaskModal from "@/components/CreateTaskModal";
 import KanbanBoard from "@/components/KanbanBoard";
@@ -49,6 +49,7 @@ import TaskEditModal from "@/components/tasks/TaskEditModal";
 import GeneralCalendar from "@/components/calendar/GeneralCalendar";
 import MobileBottomNav, { type TabType } from "@/components/navigation/MobileBottomNav";
 import TeamScreen from "@/components/team/TeamScreen";
+import ChatHub from "@/components/chat/ChatHub";
 import type { UserRole } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
 
@@ -100,6 +101,7 @@ export default function MobileDashboard() {
     attachment?: UploadedFile;
   }
   const [messages, setMessages] = useState<ExtendedMessage[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   // Sohbet Modu
@@ -266,6 +268,9 @@ export default function MobileDashboard() {
 
       const { data: msgData } = await supabase.from("chat_messages").select("*").order("created_at", { ascending: true });
       if (msgData) setMessages(msgData);
+
+      const { data: channelData } = await supabase.from("channels").select("*").order("created_at", { ascending: true });
+      if (channelData) setChannels(channelData as Channel[]);
 
       const { data: notifData } = await supabase.from("notifications").select("*").order("created_at", { ascending: false });
       if (notifData) setNotifications(notifData);
@@ -946,6 +951,32 @@ export default function MobileDashboard() {
     }
   };
 
+  const handleChatHubSend = async (params: { content: string; channel_id?: string; project_id?: string; recipient_id?: string }) => {
+    if (!currentUser) return;
+    const { data, error } = await supabase.from("chat_messages").insert({
+      channel_id: params.channel_id || null,
+      project_id: params.project_id || activeProjectId || null,
+      sender_id: currentUser.id,
+      recipient_id: params.recipient_id || null,
+      content: params.content,
+      mentions: [],
+      is_direct_message: Boolean(params.recipient_id)
+    }).select("*").single();
+
+    if (error) throw error;
+    if (data) {
+      setMessages(prev => prev.some(message => message.id === data.id) ? prev : [...prev, data as ExtendedMessage]);
+      if (params.recipient_id) {
+        void sendPushNotification(params.recipient_id, `${currentUser.full_name} kişisinden yeni mesaj`, params.content);
+      } else {
+        teamMembers
+          .filter(member => member.id !== currentUser.id)
+          .slice(0, 10)
+          .forEach(member => void sendPushNotification(member.id, "Yeni kanal mesajı", `${currentUser.full_name}: ${params.content}`));
+      }
+    }
+  };
+
   // Mesaj Gönder
   const handleSendMessage = async () => {
     if ((!newMessageText.trim() && !pendingAttachment) || !currentUser) return;
@@ -1582,6 +1613,29 @@ export default function MobileDashboard() {
 
         {/* --- TAB: SOHBET (CHAT) --- */}
         {activeTab === "chat" && (
+          <ChatHub
+            currentUser={profiles.find(profile => profile.id === currentUser.id) || {
+              id: currentUser.id,
+              email: currentUser.email,
+              full_name: currentUser.full_name,
+              role: "member",
+              created_at: ""
+            }}
+            profiles={profiles}
+            projects={projects.map(project => ({
+              id: project.id,
+              name: project.name,
+              color_code: project.color,
+              created_by: project.created_by,
+              is_archived: false,
+              created_at: ""
+            })) as Project[]}
+            channels={channels}
+            messages={messages}
+            onSendMessage={handleChatHubSend}
+          />
+        )}
+        {false && activeTab === "chat" && (
           <div className="flex flex-col h-full space-y-3">
             <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
               <button 
@@ -1600,7 +1654,7 @@ export default function MobileDashboard() {
 
             {chatMode === "dm" && (
               <div className="flex items-center gap-2 overflow-x-auto py-1 px-0.5 text-xs">
-                {teamMembers.filter(m => m.id !== currentUser.id).map(member => (
+                {teamMembers.filter(m => m.id !== currentUser?.id).map(member => (
                   <button
                     key={member.id}
                     onClick={() => setActiveDmUser(member.id)}
@@ -1633,7 +1687,7 @@ export default function MobileDashboard() {
                     <div className="flex-1 bg-slate-900 border border-slate-800 p-2.5 rounded-2xl rounded-tl-none space-y-1.5">
                       <div className="flex justify-between items-baseline">
                         <span className="text-xs font-semibold text-slate-200">
-                          {msg.sender_id === currentUser.id ? "Siz" : (msg.sender?.full_name || "Kullanıcı")}
+                          {msg.sender_id === currentUser?.id ? "Siz" : (msg.sender?.full_name || "Kullanıcı")}
                         </span>
                         <span className="text-[10px] text-slate-400">
                           {formatTimeAgo(msg.created_at)}
@@ -1704,7 +1758,7 @@ export default function MobileDashboard() {
                   <div className="flex items-center gap-2 truncate">
                     <FileText size={14} className="text-indigo-400 shrink-0" />
                     <span className="text-slate-200 truncate text-[11px] font-medium">
-                      {pendingAttachment.file_name}
+                      {pendingAttachment?.file_name}
                     </span>
                   </div>
                   <button 
