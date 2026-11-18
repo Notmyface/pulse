@@ -50,6 +50,7 @@ import GeneralCalendar from "@/components/calendar/GeneralCalendar";
 import MobileBottomNav, { type TabType } from "@/components/navigation/MobileBottomNav";
 import TeamScreen from "@/components/team/TeamScreen";
 import ChatHub from "@/components/chat/ChatHub";
+import CategoryListManager from "@/components/tasks/CategoryListManager";
 import type { UserRole } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
 
@@ -113,6 +114,7 @@ export default function MobileDashboard() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isTaskEditModalOpen, setIsTaskEditModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
 
   // Dosya ve Mention
   const [pendingAttachment, setPendingAttachment] = useState<UploadedFile | null>(null);
@@ -522,6 +524,63 @@ export default function MobileDashboard() {
       }
     } catch (err) {
       console.error("Proje eklenemedi:", err);
+    }
+  };
+
+  const handleCreateCategory = async (category: { name: string; color: string; icon: string }) => {
+    const { data, error } = await supabase.from("categories").insert(category).select("*").single();
+    if (error) throw error;
+    if (data) setCategories(prev => [...prev, data as Category]);
+  };
+
+  const handleCreateV2Project = async (project: {
+    name: string;
+    category_id: string;
+    modules: { module_todo: boolean; module_docs: boolean; module_files: boolean; module_kanban: boolean; module_gantt: boolean; module_chat: boolean };
+  }) => {
+    if (!currentUser) return;
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data.user) throw error || new Error("Oturum bulunamadı");
+    const { data: createdProject, error: projectError } = await supabase.from("projects").insert({
+      name: project.name,
+      category_id: project.category_id || null,
+      created_by: data.user.id,
+      color_code: "#6366f1",
+      ...project.modules
+    }).select("*").single();
+    if (projectError) throw projectError;
+    if (createdProject) {
+      setProjects(prev => [...prev, {
+        id: createdProject.id,
+        name: createdProject.name,
+        color: createdProject.color_code || "#6366f1",
+        is_manager: true,
+        created_by: data.user.id
+      }]);
+      setActiveProjectId(createdProject.id);
+    }
+  };
+
+  const handleUpdateV2Project = async (projectId: string, updates: {
+    name: string;
+    category_id: string | null;
+    modules: { module_todo: boolean; module_docs: boolean; module_files: boolean; module_kanban: boolean; module_gantt: boolean; module_chat: boolean };
+  }) => {
+    const { error } = await supabase.from("projects").update({
+      name: updates.name,
+      category_id: updates.category_id,
+      ...updates.modules
+    }).eq("id", projectId);
+    if (error) throw error;
+    setProjects(prev => prev.map(project => project.id === projectId ? { ...project, name: updates.name } : project));
+  };
+
+  const handleArchiveV2Project = async (projectId: string) => {
+    const { error } = await supabase.from("projects").update({ is_archived: true }).eq("id", projectId);
+    if (error) throw error;
+    setProjects(prev => prev.filter(project => project.id !== projectId));
+    if (activeProjectId === projectId) {
+      setActiveProjectId("");
     }
   };
 
@@ -1453,6 +1512,36 @@ export default function MobileDashboard() {
         {/* --- TAB: GÖREVLER (TASKS) --- */}
         {activeTab === "tasks" && (
           <div className="space-y-4">
+            {showCategoryManager && (
+              <CategoryListManager
+                categories={categories}
+                projects={projects.map(project => ({
+                  id: project.id,
+                  name: project.name,
+                  color_code: project.color,
+                  created_by: project.created_by,
+                  category_id: undefined,
+                  is_archived: false,
+                  created_at: "",
+                  module_todo: true,
+                  module_docs: true,
+                  module_files: true,
+                  module_kanban: true,
+                  module_gantt: true,
+                  module_chat: true
+                }))}
+                activeProjectId={activeProjectId}
+                onSelectProject={projectId => {
+                  setActiveProjectId(projectId);
+                  setShowCategoryManager(false);
+                }}
+                onCreateCategory={handleCreateCategory}
+                onCreateProject={handleCreateV2Project}
+                onUpdateProject={handleUpdateV2Project}
+                onArchiveProject={handleArchiveV2Project}
+                canManageLists={Boolean(activeProject?.is_manager)}
+              />
+            )}
             <div className="flex items-center justify-between gap-2">
               <div className="flex gap-1.5 overflow-x-auto text-xs py-0.5">
                 <button 
@@ -1484,6 +1573,11 @@ export default function MobileDashboard() {
               </div>
 
               <div className="flex items-center gap-1.5 shrink-0">
+                {activeProject?.is_manager && (
+                  <button onClick={() => setShowCategoryManager(prev => !prev)} className={`p-1.5 rounded-xl transition ${showCategoryManager ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-300"}`} title="Kategoriler ve projeler">
+                    <FolderPlus size={16} />
+                  </button>
+                )}
                 <button onClick={() => setViewMode("list")} className={`p-1.5 rounded-xl transition ${viewMode === "list" ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-300"}`} title="Liste görünümü"><ListFilter size={16} /></button>
                 <button onClick={() => setViewMode("kanban")} className={`p-1.5 rounded-xl transition ${viewMode === "kanban" ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-300"}`} title="Kanban görünümü"><Kanban size={16} /></button>
                 <button onClick={() => setViewMode("timeline")} className={`p-1.5 rounded-xl transition ${viewMode === "timeline" ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-300"}`} title="Zaman çizelgesi"><CalendarRange size={16} /></button>

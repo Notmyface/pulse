@@ -14,15 +14,36 @@ DROP POLICY IF EXISTS "Task comments insertable by project members" ON public.ta
 DROP POLICY IF EXISTS "Task comments readable by managers or assignee" ON public.task_comments;
 DROP POLICY IF EXISTS "Task comments insertable by managers or assignee" ON public.task_comments;
 
--- Giriş yapmış tüm ekip üyeleri görev yorumlarını okuyabilir
-CREATE POLICY "Task comments readable by authenticated" ON public.task_comments
+-- Yalnızca görevin yöneticisi veya atanmış kişisi yorumları görebilir
+CREATE POLICY "Task comments readable by managers or assignee" ON public.task_comments
     FOR SELECT TO authenticated
-    USING (TRUE);
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.tasks task
+            WHERE task.id = task_comments.task_id
+              AND (
+                  public.is_project_manager(task.project_id)
+                  OR task.assigned_to = auth.uid()
+                  OR task.created_by = auth.uid()
+              )
+        )
+    );
 
--- Giriş yapmış kullanıcı kendi adıyla yorum ekleyebilir
+-- Yalnızca görevin erişim yetkisi olan kullanıcı kendi adıyla yorum ekleyebilir
 CREATE POLICY "Task comments insertable by author" ON public.task_comments
     FOR INSERT TO authenticated
-    WITH CHECK (auth.uid() = user_id);
+    WITH CHECK (
+        auth.uid() = user_id
+        AND EXISTS (
+            SELECT 1 FROM public.tasks task
+            WHERE task.id = task_comments.task_id
+              AND (
+                  public.is_project_manager(task.project_id)
+                  OR task.assigned_to = auth.uid()
+                  OR task.created_by = auth.uid()
+              )
+        )
+    );
 
 -- Kullanıcı kendi yorumunu silebilir
 CREATE POLICY "Task comments deletable by author or admin" ON public.task_comments
@@ -41,21 +62,31 @@ DROP POLICY IF EXISTS "Chat messages accessible by participants" ON public.chat_
 DROP POLICY IF EXISTS "Chat messages insertable by sender" ON public.chat_messages;
 
 -- Mesajları Okuma Politikası:
--- 1) Birebir DM ise: yalnızca gönderen veya alıcı okuyabilir.
--- 2) Proje/İş sohbeti ise: tüm giriş yapmış ekip üyeleri okuyabilir.
+-- 1) Birebir DM: yalnızca gönderen veya alıcı
+-- 2) Proje mesajı: ilgili proje üyesi
+-- 3) Özel kanal mesajı: kanal üyesi veya kurucu
 CREATE POLICY "Chat messages accessible by participants" ON public.chat_messages
     FOR SELECT TO authenticated
     USING (
         (is_direct_message = TRUE AND (sender_id = auth.uid() OR recipient_id = auth.uid()))
         OR
-        (is_direct_message IS NOT TRUE)
+        (is_direct_message IS NOT TRUE AND channel_id IS NULL AND project_id IS NOT NULL AND public.is_project_member(project_id))
+        OR
+        (is_direct_message IS NOT TRUE AND channel_id IS NOT NULL AND public.is_channel_member(channel_id))
     );
 
 -- Mesaj Gönderme Politikası:
--- Giriş yapmış kullanıcı kendi adına mesaj gönderebilir.
+-- Kullanıcı kendi adına; DM ise alıcılı, kanal/proje mesajı ise üyelikli gönderir.
 CREATE POLICY "Chat messages insertable by sender" ON public.chat_messages
     FOR INSERT TO authenticated
-    WITH CHECK (auth.uid() = sender_id);
+    WITH CHECK (
+        auth.uid() = sender_id
+        AND (
+            (is_direct_message = TRUE AND recipient_id IS NOT NULL)
+            OR (is_direct_message IS NOT TRUE AND channel_id IS NULL AND project_id IS NOT NULL AND public.is_project_member(project_id))
+            OR (is_direct_message IS NOT TRUE AND channel_id IS NOT NULL AND public.is_channel_member(channel_id))
+        )
+    );
 
 -- 3. PERFORMANS İÇİN İNDEKSLER
 CREATE INDEX IF NOT EXISTS idx_task_comments_task_id ON public.task_comments (task_id);
