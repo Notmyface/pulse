@@ -21,6 +21,7 @@ interface ChatHubProps {
   profiles: Profile[];
   projects: Project[];
   channels: Channel[];
+  channelMembers?: Array<{ channel_id: string; user_id: string }>;
   messages: ChatMessage[];
   onSendMessage: (params: {
     content: string;
@@ -36,6 +37,7 @@ export default function ChatHub({
   profiles,
   projects,
   channels,
+  channelMembers = [],
   messages,
   onSendMessage,
   onOpenArchive,
@@ -230,8 +232,27 @@ export default function ChatHub({
       {/* 4. İş Sohbetleri Listesi */}
       {activeTab === "projects" && (
         <div className="space-y-2">
+          {channels
+            .filter((channel) => channel.type === "custom")
+            .filter((channel) => channel.created_by === currentUser.id || channelMembers.some(member => member.channel_id === channel.id && member.user_id === currentUser.id))
+            .filter((channel) => !searchQuery.trim() || channel.name.toLowerCase().includes(searchQuery.toLowerCase()))
+            .map((channel) => (
+              <div
+                key={channel.id}
+                onClick={() => setSelectedChat({ type: "channel", id: channel.id, title: channel.name })}
+                className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center gap-3 cursor-pointer hover:border-indigo-200 active:scale-[0.99] transition-all"
+              >
+                <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-sm font-bold text-white bg-slate-700 shrink-0">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+                <div className="truncate">
+                  <h4 className="text-xs font-bold text-slate-800 truncate">{channel.name}</h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Özel sohbet</p>
+                </div>
+              </div>
+            ))}
           {projects
-            .filter((p) => p.module_chat && !p.is_archived)
+            .filter((p) => p.module_chat !== false && !p.is_archived)
             .map((proj) => (
               <div
                 key={proj.id}

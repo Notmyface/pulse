@@ -50,6 +50,7 @@ import GeneralCalendar from "@/components/calendar/GeneralCalendar";
 import MobileBottomNav, { type TabType } from "@/components/navigation/MobileBottomNav";
 import TeamScreen from "@/components/team/TeamScreen";
 import ChatHub from "@/components/chat/ChatHub";
+import ProfileScreen from "@/components/profile/ProfileScreen";
 import CategoryListManager from "@/components/tasks/CategoryListManager";
 import type { UserRole } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
@@ -79,7 +80,7 @@ export default function MobileDashboard() {
   const [recoverySuccess, setRecoverySuccess] = useState("");
 
   // Uygulama Navigasyon State'leri
-  const [activeTab, setActiveTab] = useState<TabType | "notifications">("personal");
+  const [activeTab, setActiveTab] = useState<TabType | "notifications" | "profile">("personal");
   const [viewMode, setViewMode] = useState<"list" | "kanban" | "timeline">("list");
   const [taskFilter, setTaskFilter] = useState<"all" | "assigned_to_me" | "urgent" | "archived">("all");
   
@@ -103,6 +104,7 @@ export default function MobileDashboard() {
   }
   const [messages, setMessages] = useState<ExtendedMessage[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [channelMembers, setChannelMembers] = useState<Array<{ channel_id: string; user_id: string }>>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   // Sohbet Modu
@@ -273,6 +275,9 @@ export default function MobileDashboard() {
 
       const { data: channelData } = await supabase.from("channels").select("*").order("created_at", { ascending: true });
       if (channelData) setChannels(channelData as Channel[]);
+
+      const { data: channelMemberData } = await supabase.from("channel_members").select("channel_id,user_id");
+      if (channelMemberData) setChannelMembers(channelMemberData as Array<{ channel_id: string; user_id: string }>);
 
       const { data: notifData } = await supabase.from("notifications").select("*").order("created_at", { ascending: false });
       if (notifData) setNotifications(notifData);
@@ -1379,7 +1384,7 @@ export default function MobileDashboard() {
 
   // GİRİŞ YAPILMIŞSA: DASHBOARD
   return (
-    <div className="flex flex-col h-screen max-w-md mx-auto w-full bg-slate-950 text-slate-100 shadow-2xl relative overflow-hidden">
+    <div className="flex flex-col h-screen w-full bg-slate-950 text-slate-100 relative overflow-hidden">
       
       {/* 1. ÜST BAŞLIK */}
       <header className="px-4 pt-12 pb-3 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 flex items-center justify-between sticky top-0 z-30">
@@ -1455,9 +1460,16 @@ export default function MobileDashboard() {
                 Çıkış
               </button>
             </div>
-            <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-xs text-white">
-              {currentUser.full_name.charAt(0).toUpperCase()}
-            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab("profile")}
+              className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-xs text-white overflow-hidden"
+              title="Profil"
+            >
+              {profiles.find(profile => profile.id === currentUser.id)?.avatar_url ? (
+                <img src={profiles.find(profile => profile.id === currentUser.id)?.avatar_url} alt="Profil" className="w-full h-full object-cover" />
+              ) : currentUser.full_name.charAt(0).toUpperCase()}
+            </button>
           </div>
 
           <button 
@@ -1725,6 +1737,7 @@ export default function MobileDashboard() {
               created_at: ""
             })) as Project[]}
             channels={channels}
+            channelMembers={channelMembers}
             messages={messages}
             onSendMessage={handleChatHubSend}
           />
@@ -1949,6 +1962,23 @@ export default function MobileDashboard() {
         )}
 
         {/* --- TAB: EKİP (TEAM) --- */}
+        {activeTab === "profile" && (
+          <ProfileScreen
+            profile={profiles.find(profile => profile.id === currentUser.id) || {
+              id: currentUser.id,
+              email: currentUser.email,
+              full_name: currentUser.full_name,
+              role: activeProject?.is_manager ? "admin" : "member",
+              created_at: ""
+            }}
+            onProfileUpdated={(updatedProfile) => {
+              setProfiles(prev => prev.map(profile => profile.id === updatedProfile.id ? updatedProfile : profile));
+              setCurrentUser(prev => prev ? { ...prev, full_name: updatedProfile.full_name } : prev);
+            }}
+            onSignOut={() => supabase.auth.signOut()}
+          />
+        )}
+
         {activeTab === "team" && (
           <TeamScreen
             profiles={profiles}
@@ -1967,7 +1997,7 @@ export default function MobileDashboard() {
 
       {/* 3. MOBİL ALT NAVİGASYON */}
       <MobileBottomNav
-        activeTab={activeTab === "notifications" ? "personal" : activeTab}
+        activeTab={activeTab === "notifications" || activeTab === "profile" ? "personal" : activeTab}
         onChangeTab={(tab) => setActiveTab(tab)}
         unreadChatCount={0}
       />
