@@ -33,7 +33,7 @@ import {
   CalendarRange
 } from "lucide-react";
 import { formatTimeAgo } from "@/lib/utils";
-import type { PersonalTodo, Task, TaskComment, TaskDependency, ChatMessage, NotificationItem, TaskPriority } from "@/types/database";
+import type { PersonalTodo, Task, TaskComment, TaskDependency, ChatMessage, NotificationItem, TaskPriority, Category, Profile } from "@/types/database";
 import TaskDetailModal from "@/components/TaskDetailModal";
 import CreateTaskModal from "@/components/CreateTaskModal";
 import KanbanBoard from "@/components/KanbanBoard";
@@ -44,9 +44,9 @@ import InstallPrompt from "@/components/InstallPrompt";
 import PersonalTodoPanel from "@/components/PersonalTodoPanel";
 import ProjectTimelinePanel from "@/components/ProjectTimelinePanel";
 import PersonalHomeScreen from "@/components/personal/PersonalHomeScreen";
+import TaskEditModal from "@/components/tasks/TaskEditModal";
 import GeneralCalendar from "@/components/calendar/GeneralCalendar";
 import MobileBottomNav, { type TabType } from "@/components/navigation/MobileBottomNav";
-import type { Profile } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
 
 export default function MobileDashboard() {
@@ -87,6 +87,7 @@ export default function MobileDashboard() {
   const [teamMembers, setTeamMembers] = useState<Array<{ id: string; name: string; role: string }>>([]);
   const [projectMemberships, setProjectMemberships] = useState<Array<{ project_id: string; user_id: string; is_manager: boolean }>>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskDependencies, setTaskDependencies] = useState<TaskDependency[]>([]);
   const [taskComments, setTaskComments] = useState<Record<string, TaskComment[]>>({});
@@ -104,6 +105,8 @@ export default function MobileDashboard() {
 
   // Modallar
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [isTaskEditModalOpen, setIsTaskEditModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   // Dosya ve Mention
@@ -223,6 +226,8 @@ export default function MobileDashboard() {
       // 2. Yalnızca erişilebilen projelerin üyelerini ve profillerini çek
       const { data: membershipData } = await supabase.from("project_members").select("project_id, user_id, is_manager");
       const { data: profData } = await supabase.from("profiles").select("*");
+      const { data: categoryData } = await supabase.from("categories").select("*").eq("is_archived", false).order("order_index", { ascending: true });
+      if (categoryData) setCategories(categoryData as Category[]);
       setProjectMemberships((membershipData || []) as Array<{ project_id: string; user_id: string; is_manager: boolean }>);
       const loadedProfiles = (profData || []) as Profile[];
       setProfiles(loadedProfiles);
@@ -241,7 +246,17 @@ export default function MobileDashboard() {
 
       // 3. Görevleri ve mesajları yalnızca RLS'nin izin verdiği kapsamda çek
       const { data: taskData } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
-      if (taskData) setTasks(taskData);
+      const { data: assigneeData } = await supabase.from("task_assignees").select("task_id,user_id,profiles:user_id(id,email,full_name,role,user_emoji,user_color,created_at)");
+      if (taskData) {
+        const assigneeRows = (assigneeData || []) as unknown as Array<{ task_id: string; profiles: Profile | Profile[] }>;
+        setTasks((taskData as Task[]).map(task => ({
+          ...task,
+          assignees: assigneeRows
+            .filter(row => row.task_id === task.id)
+            .map(row => Array.isArray(row.profiles) ? row.profiles[0] : row.profiles)
+            .filter((profile): profile is Profile => Boolean(profile))
+        })));
+      }
 
       const { data: dependencyData } = await supabase.from("task_dependencies").select("*");
       if (dependencyData) setTaskDependencies(dependencyData as TaskDependency[]);
@@ -760,6 +775,53 @@ export default function MobileDashboard() {
   };
 
   // Yeni Görev Oluştur
+  const handleSaveTaskModal = async (taskData: Partial<Task>, assigneeIds: string[]) => {
+    if (!currentUser) return;
+
+    const payload = {
+      title: taskData.title,
+      description: taskData.description,
+      project_id: taskData.project_id || activeProjectId || null,
+      status: taskData.status || "todo",
+      priority: taskData.priority || "normal",
+      task_color: taskData.task_color || "#6366f1",
+      start_date: taskData.start_date,
+      due_date: taskData.due_date,
+      assigned_to: assigneeIds[0] || null,
+      created_by: taskData.created_by || currentUser.id
+    };
+
+    let savedTask: Task | null = null;
+    if (taskData.id) {
+      const { data, error } = await supabase.from("tasks").update(payload).eq("id", taskData.id).select("*").single();
+      if (error) throw error;
+      savedTask = data as Task;
+    } else {
+      const { data, error } = await supabase.from("tasks").insert(payload).select("*").single();
+      if (error) throw error;
+      savedTask = data as Task;
+    }
+
+    if (savedTask) {
+      await supabase.from("task_assignees").delete().eq("task_id", savedTask.id);
+      if (assigneeIds.length > 0) {
+        await supabase.from("task_assignees").insert(
+          assigneeIds.map(userId => ({ task_id: savedTask!.id, user_id: userId }))
+        );
+      }
+      savedTask = {
+        ...savedTask,
+        assignees: profiles.filter(profile => assigneeIds.includes(profile.id))
+      };
+      setTasks(prev => taskData.id
+        ? prev.map(task => task.id === savedTask!.id ? savedTask! : task)
+        : [savedTask!, ...prev]);
+    }
+
+    setEditingTask(null);
+    setIsTaskEditModalOpen(false);
+  };
+
   const handleCreateTask = async (newTaskData: Omit<Task, "id" | "created_at">, newProjectTitle?: string) => {
     if (!currentUser) return;
 
@@ -1779,15 +1841,29 @@ export default function MobileDashboard() {
         onArchiveTask={handleArchiveTask}
       />
 
-      <CreateTaskModal 
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        teamMembers={teamMembers}
-        projects={projects}
-        currentProjectId={activeProjectId}
+      <TaskEditModal
+        isOpen={isCreateModalOpen || isTaskEditModalOpen}
+        onClose={() => {
+          setIsCreateModalOpen(false);
+          setIsTaskEditModalOpen(false);
+          setEditingTask(null);
+        }}
+        task={editingTask}
+        onSave={handleSaveTaskModal}
+        onDelete={handleArchiveTask ? async (taskId) => { await handleArchiveTask(taskId, true); } : undefined}
+        profiles={profiles}
+        projects={projects.map(project => ({
+          id: project.id,
+          name: project.name,
+          color_code: project.color,
+          created_by: project.created_by,
+          is_archived: false,
+          created_at: ""
+        }))}
+        categories={categories}
         currentUserId={currentUser.id}
-        currentUserName={currentUser.full_name}
-        onCreateTask={handleCreateTask}
+        comments={editingTask ? taskComments[editingTask.id] || [] : []}
+        onAddComment={handleAddTaskComment}
       />
 
     </div>
