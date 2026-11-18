@@ -43,6 +43,7 @@ import PushNotificationToggle from "@/components/PushNotificationToggle";
 import InstallPrompt from "@/components/InstallPrompt";
 import PersonalTodoPanel from "@/components/PersonalTodoPanel";
 import ProjectTimelinePanel from "@/components/ProjectTimelinePanel";
+import KanbanGanttView from "@/components/views/KanbanGanttView";
 import PersonalHomeScreen from "@/components/personal/PersonalHomeScreen";
 import TaskEditModal from "@/components/tasks/TaskEditModal";
 import GeneralCalendar from "@/components/calendar/GeneralCalendar";
@@ -582,6 +583,24 @@ export default function MobileDashboard() {
   };
 
   // Görevi Tamamla / Geri Al
+  const updateTaskStatus = async (taskId: string, status: Task["status"]) => {
+    if (!currentUser) return;
+    const completedAt = status === "done" ? new Date().toISOString() : null;
+    const { error } = await supabase.from("tasks").update({
+      status,
+      completed_at: completedAt,
+      completed_by: status === "done" ? currentUser.id : null
+    }).eq("id", taskId);
+    if (!error) {
+      setTasks(prev => prev.map(task => task.id === taskId ? {
+        ...task,
+        status,
+        completed_at: completedAt || undefined,
+        completed_by: status === "done" ? currentUser.id : undefined
+      } : task));
+    }
+  };
+
   const toggleTaskStatus = async (taskId: string) => {
     const target = tasks.find(t => t.id === taskId);
     if (!target || !currentUser) return;
@@ -1409,10 +1428,25 @@ export default function MobileDashboard() {
                 onSelectTask={task => setSelectedTask(task)}
               />
             ) : viewMode === "kanban" ? (
-              <KanbanBoard 
+              <KanbanGanttView
+                project={activeProject ? {
+                  id: activeProject.id,
+                  name: activeProject.name,
+                  color_code: activeProject.color,
+                  created_by: activeProject.created_by,
+                  is_archived: false,
+                  created_at: ""
+                } : null}
                 tasks={filteredTasks}
-                onSelectTask={(task) => setSelectedTask(task)}
-                onToggleStatus={toggleTaskStatus}
+                onEditTask={(task) => {
+                  setEditingTask(task);
+                  setIsTaskEditModalOpen(true);
+                }}
+                onOpenCreateTask={() => {
+                  setEditingTask(null);
+                  setIsCreateModalOpen(true);
+                }}
+                onUpdateTaskStatus={updateTaskStatus}
               />
             ) : (
               <div className="space-y-2.5">
